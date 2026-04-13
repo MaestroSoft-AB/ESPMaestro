@@ -15,9 +15,9 @@ typedef struct
 
 /* ======================= INTERFACE ======================= */
 
-int dh_init(DH* _DH);
+int display_handler_init(DH* _DH);
 
-void dh_work(void* _null_for_now);
+void display_handler_work(void* _null_for_now);
 
 // void dh_dispose(DH* _DH);
 
