@@ -62,7 +62,7 @@ static char* get_iso_time_string(void) {
   return iso_string;
 }
 
-int dh_init(DH* _DH)
+int display_handler_init(DH* _DH)
 {
   /* Handles for display+touch */
   tp_handle = touch_gt911_init();  
@@ -145,7 +145,7 @@ static void dh_build_sysinfo()
   lv_label_set_text(lv_label_main, screen_text);
 }
 
-void dh_work(void* _null_for_now)
+void display_handler_work(void* _null_for_now)
 {
   if (lvgl_port_lock(-1)) {
     dh_build_base();
