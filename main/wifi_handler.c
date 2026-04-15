@@ -14,6 +14,8 @@
 #include <esp_netif.h>
 #include <nvs_flash.h>
 
+#include "display_handler.h"
+
 static const char *TAG = "WIFI";
 
 void wh_start(void *args) {
@@ -38,8 +40,8 @@ void wh_start(void *args) {
   wifi_config_t wificonf = {
       .sta =
           {
-              .ssid = "",
-              .password = "",
+              .ssid = "REDACTED_SSID",
+              .password = "REDACTED_PASSWORD",
           },
   };
 
@@ -80,12 +82,32 @@ void wh_start(void *args) {
 
     if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
       ESP_LOGI(TAG, "Ansluten till: %s", ap_info.ssid);
+
+      /* Check that netif exists, that we receieve IP info and that it is not 0
+       */
+      if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+        if (ip_info.ip.addr != 0) {
+
+          char ip_str[16];
+          /* Convert IPv4 to string using ESP-IDF macros. IPSTR -> "%d.%d.%d.%d"
+           * and IP2STR -> extracts the 4 numerical segments from ip_info.ip */
+          snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
+
+          ESP_LOGI(TAG, "Nuvarande IP: %s", ip_str);
+          display_handler_wifi_status(true, (const char *)ap_info.ssid, ip_str);
+        } else {
+          ESP_LOGI(TAG, "Hämtar IP...");
+          display_handler_wifi_status(true, (const char *)ap_info.ssid,
+                                      "Hämtar IP...");
+        }
+      } else {
+        ESP_LOGI(TAG, "Hämtar IP...");
+        display_handler_wifi_status(true, (const char *)ap_info.ssid,
+                                    "Hämtar IP...");
+      }
     } else {
       ESP_LOGI(TAG, "Inte ansluten");
-    }
-
-    if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-      ESP_LOGI(TAG, "Nuvarande IP: " IPSTR, IP2STR(&ip_info.ip));
+      display_handler_wifi_status(false, NULL, NULL);
     }
 
     vTaskDelay(pdMS_TO_TICKS(1000));

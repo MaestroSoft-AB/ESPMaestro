@@ -28,6 +28,7 @@ static char iso_string[20] = {0};
 // static char* iso_string_offset = NULL;
 static char mem_info[91] = {0};
 // static char* mem_info_offset = NULL;
+static char wifi_info[128] = "WIFI: Inte ansluten";
 
 static lv_obj_t *lv_screen = NULL;
 // static lv_obj_t* lv_label_menu = NULL;
@@ -58,6 +59,16 @@ static char *get_iso_time_string(void) {
   }
 
   return iso_string;
+}
+
+void display_handler_wifi_status(bool connected, const char *ssid,
+                                 const char *ip) {
+  if (connected && ssid && ip) {
+    snprintf(wifi_info, sizeof(wifi_info),
+             "WIFI: Ansluten till: %s\nWIFI: Nuvarande IP: %s", ssid, ip);
+  } else {
+    snprintf(wifi_info, sizeof(wifi_info), "WIFI: Inte ansluten");
+  }
 }
 
 int display_handler_init(DH *_DH) {
@@ -164,8 +175,8 @@ static void dh_build_sysinfo() {
            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 
   snprintf(screen_text, sizeof(screen_text),
-           "%s\nSystem Time: %s\n%s\nMemory %s", intro, get_iso_time_string(),
-           model_info, mem_info);
+           "%s\nSystem Time: %s\n%s\nMemory %s\n\n%s", intro,
+           get_iso_time_string(), model_info, mem_info, wifi_info);
 
   lv_label_set_text(lv_label_main, screen_text);
 }
