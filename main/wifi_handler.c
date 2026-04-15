@@ -38,8 +38,8 @@ void wh_start(void *args) {
   wifi_config_t wificonf = {
       .sta =
           {
-              .ssid = "REDACTED_SSID",
-              .password = "REDACTED_PASSWORD",
+              .ssid = "",
+              .password = "",
           },
   };
 
