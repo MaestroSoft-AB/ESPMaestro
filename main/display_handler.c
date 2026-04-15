@@ -28,7 +28,7 @@ static char iso_string[20] = {0};
 // static char* iso_string_offset = NULL;
 static char mem_info[91] = {0};
 // static char* mem_info_offset = NULL;
-static char wifi_info[128] = "WIFI: Inte ansluten";
+static char wifi_info[128] = "WIFI: Not connected";
 
 static lv_obj_t *lv_screen = NULL;
 // static lv_obj_t* lv_label_menu = NULL;
@@ -65,9 +65,9 @@ void display_handler_wifi_status(bool connected, const char *ssid,
                                  const char *ip) {
   if (connected && ssid && ip) {
     snprintf(wifi_info, sizeof(wifi_info),
-             "WIFI: Ansluten till: %s\nWIFI: Nuvarande IP: %s", ssid, ip);
+             "WIFI Details\nSSID:: %s\nIP Address: %s", ssid, ip);
   } else {
-    snprintf(wifi_info, sizeof(wifi_info), "WIFI: Inte ansluten");
+    snprintf(wifi_info, sizeof(wifi_info), "WIFI: Not connected");
   }
 }
 

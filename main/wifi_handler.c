@@ -6,10 +6,13 @@
 #include "freertos/idf_additions.h"
 #include "freertos/projdefs.h"
 
+#include "esp_sntp.h"
+
 #include <esp_log.h>
 #include <esp_wifi.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 #include <esp_netif.h>
 #include <nvs_flash.h>
@@ -17,6 +20,35 @@
 #include "display_handler.h"
 
 static const char *TAG = "WIFI";
+
+/* Fetch current UTC time using SNTP */
+static void fetch_time_utc(void) {
+  ESP_LOGI("TIME", "Starting SNTP");
+
+  esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+  esp_sntp_setservername(0, "pool.ntp.org");
+
+  esp_sntp_init();
+
+  time_t now = 0;
+  struct tm timeinfo = {0};
+
+  int retry = 0;
+  const int retry_count = 10;
+
+  while (timeinfo.tm_year < (2020 - 1900) && ++retry < retry_count) {
+    ESP_LOGI("TIME", "Setting system time... (%d)", retry);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    time(&now);
+    localtime_r(&now, &timeinfo);
+  }
+
+  if (timeinfo.tm_year >= (2020 - 1900)) {
+    ESP_LOGI("TIME", "Time synced");
+  } else {
+    ESP_LOGW("TIME", "Failed to fetch time");
+  }
+}
 
 void wh_start(void *args) {
   nvs_flash_init();
@@ -40,8 +72,8 @@ void wh_start(void *args) {
   wifi_config_t wificonf = {
       .sta =
           {
-              .ssid = "REDACTED_SSID",
-              .password = "REDACTED_PASSWORD",
+              .ssid = "networkName",
+              .password = "networkPassword",
           },
   };
 
@@ -78,10 +110,12 @@ void wh_start(void *args) {
 
   wifi_ap_record_t ap_info;
 
+  bool time_synced = false;
+
   while (1) {
 
     if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-      ESP_LOGI(TAG, "Ansluten till: %s", ap_info.ssid);
+      ESP_LOGI(TAG, "SSID: %s", ap_info.ssid);
 
       /* Check that netif exists, that we receieve IP info and that it is not 0
        */
@@ -93,21 +127,32 @@ void wh_start(void *args) {
            * and IP2STR -> extracts the 4 numerical segments from ip_info.ip */
           snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
 
-          ESP_LOGI(TAG, "Nuvarande IP: %s", ip_str);
+          ESP_LOGI(TAG, "IP Address: %s", ip_str);
+
           display_handler_wifi_status(true, (const char *)ap_info.ssid, ip_str);
+
+          /* Sync time only once after we have a valid IP */
+          if (!time_synced) {
+            fetch_time_utc();
+            time_synced = true;
+          }
+
         } else {
-          ESP_LOGI(TAG, "Hämtar IP...");
+          ESP_LOGI(TAG, "Fetching IP Address...");
           display_handler_wifi_status(true, (const char *)ap_info.ssid,
-                                      "Hämtar IP...");
+                                      "Fetching IP Address...");
         }
       } else {
-        ESP_LOGI(TAG, "Hämtar IP...");
+        ESP_LOGI(TAG, "Fetching IP Address...");
         display_handler_wifi_status(true, (const char *)ap_info.ssid,
-                                    "Hämtar IP...");
+                                    "Fetching IP Address...");
       }
     } else {
-      ESP_LOGI(TAG, "Inte ansluten");
+      ESP_LOGI(TAG, "Not connected");
       display_handler_wifi_status(false, NULL, NULL);
+
+      /* Reset time sync if connection drops */
+      time_synced = false;
     }
 
     vTaskDelay(pdMS_TO_TICKS(1000));
