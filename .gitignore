@@ -67,8 +67,8 @@ build/
 build.clang/
 
 # No cache
-*/cache/*
-*/.cache/*
+.cache/
+.clangd/
 
 # No env vars
 .env
