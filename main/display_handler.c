@@ -177,10 +177,8 @@ static void dh_build_sysinfo() {
   snprintf(screen_text, sizeof(screen_text),
            "%s\nSystem Time: %s\n%s\nMemory %s\n\n%s", intro,
            get_iso_time_string(), model_info, mem_info, wifi_info);
-           "%s\nSystem Time: %s\n%s\nMemory %s", intro, get_iso_time_string(),
-           model_info, mem_info);
 
-           lv_label_set_text(lv_label_main, screen_text);
+  lv_label_set_text(lv_label_main, screen_text);
 }
 
 void display_handler_work(void *_null_for_now) {
