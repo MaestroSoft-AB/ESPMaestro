@@ -72,8 +72,8 @@ void wh_start(void *args) {
   wifi_config_t wificonf = {
       .sta =
           {
-              .ssid = "islandwifi",
-              .password = "iwasthereforthesnorkling",
+              .ssid = "YourMomDoesntWorkHereBro",
+              .password = "TheKingOfTheIronFistTournament",
           },
   };
 

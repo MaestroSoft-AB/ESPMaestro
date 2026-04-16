@@ -16,6 +16,7 @@ typedef struct {
   lv_obj_t *header_btn_row;
   lv_obj_t *btn_wifi;
   lv_obj_t *btn_menu;
+  lv_obj_t *btn_home;
 
   char wifi_status[128];
 
@@ -26,6 +27,7 @@ void ui_set_body_text(UI *_UI, const char *_text);
 void ui_set_footer_text(UI *_UI, const char *_text);
 void ui_set_wifi_status(UI *_UI, bool _connected, const char *_ssid,
                         const char *_ip);
+void ui_show_home_screen(UI *_UI);
 void ui_tick(UI *_UI);
 
 #endif

@@ -3,6 +3,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "esp_chip_info.h"
+#include "esp_heap_caps.h"
+#include "esp_system.h"
+#include <time.h>
+
 extern const lv_font_t notosans_14;
 static const char *TAG = "UI";
 
@@ -14,8 +19,68 @@ static void ui_build_footer(UI *_UI);
 static lv_obj_t *ui_create_button(UI *_UI, lv_obj_t *_parent,
                                   const char *_text);
 static void header_button_event_cb(lv_event_t *_event);
+static char *ui_get_iso_time_string(void);
 /*----------------------------------------------------*/
+static char *ui_get_iso_time_string(void) {
+  static char iso_string[20] = {0};
 
+  time_t epoch = time(NULL);
+  struct tm *tm = gmtime(&epoch);
+
+  if (tm) {
+    int year = tm->tm_year + 1900;
+    int month = tm->tm_mon + 1;
+    int day = tm->tm_mday;
+    int hour = tm->tm_hour;
+    int min = tm->tm_min;
+    int sec = tm->tm_sec;
+
+    if (snprintf(iso_string, sizeof(iso_string),
+                 "%04d-%02d-%02dT%02d:%02d:%02d", year, month, day, hour, min,
+                 sec) < 0) {
+      snprintf(iso_string, sizeof(iso_string), "N/A");
+    }
+  } else {
+    snprintf(iso_string, sizeof(iso_string), "N/A");
+  }
+  return iso_string;
+}
+void ui_show_home_screen(UI *_UI) {
+  if (!_UI)
+    return;
+
+  char screen_text[512] = {0};
+  char mem_info[128] = {0};
+  char model_info[128] = {0};
+
+  esp_chip_info_t chip_info;
+  esp_chip_info(&chip_info);
+
+  snprintf(mem_info, sizeof(model_info), "Model: %s\nCores: %d\nRevision: %d",
+           CONFIG_IDF_TARGET, chip_info.cores, chip_info.revision);
+
+  snprintf(mem_info, sizeof(mem_info),
+           "Total: %2.2fkB\n"
+           "Internal: %2.2fkB\n"
+           "External: %2.2fkB\n"
+           "Largest free block: %u bytes",
+           (float)esp_get_free_heap_size() / 1024,
+           (float)heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024,
+           (float)heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024,
+           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+
+  const char *intro = "----------------------------------------------------\n"
+                      "-------------------- ESPMaestro --------------------\n"
+                      "----------------------------------------------------\n";
+
+  snprintf(screen_text, sizeof(screen_text),
+           "Hello Bossu \n%s\nSystem Time: %s\n%s\nMemory %s\n\nClick the "
+           "buttons for more FAKTA",
+           intro, ui_get_iso_time_string(), model_info, mem_info);
+
+  ui_set_body_text(_UI, screen_text);
+  ui_set_footer_text(_UI, "Home screen");
+}
 void ui_init(UI *_UI) {
   if (!_UI)
     return;
@@ -101,6 +166,7 @@ static void ui_build_header(UI *_UI) {
   lv_obj_set_height(_UI->header_btn_row, LV_SIZE_CONTENT);
   // LV_SIZE_CONTENT lets the container shrink-wrap around its children
 
+  _UI->btn_home = ui_create_button(_UI, _UI->header_btn_row, "Home");
   _UI->btn_menu = ui_create_button(_UI, _UI->header_btn_row, "Menu");
   _UI->btn_wifi = ui_create_button(_UI, _UI->header_btn_row, "WiFi");
 }
@@ -188,6 +254,9 @@ static void header_button_event_cb(lv_event_t *_event) {
     ESP_LOGI(TAG, "WiFi button was pressed");
     lv_label_set_text(_UI->footer_label, "WiFi button was pressed");
     lv_label_set_text(_UI->body_label, "SHOW WIFI MENU ON SIDE?");
+  } else if (btn == _UI->btn_home) {
+    ESP_LOGI(TAG, "Home button was pressed");
+    ui_show_home_screen(_UI);
   }
 }
 
