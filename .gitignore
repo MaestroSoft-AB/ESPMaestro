@@ -97,3 +97,28 @@ secrets.h
 sdkconfig
 *.lock
 notes.md
+
+# Cmake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+
+#ESP-IDF
+managed_components/
+.espressif/
+.tools/
+
+#Python
+__pycache__/
+*.pyc
+*.pyo
+
+
+#Editor & OS
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+*~
+*.swp
+
