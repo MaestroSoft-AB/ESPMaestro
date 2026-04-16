@@ -28,12 +28,6 @@ static char iso_string[20] = {0};
 // static char* iso_string_offset = NULL;
 static char mem_info[91] = {0};
 // static char* mem_info_offset = NULL;
-static char wifi_info[128] = "WIFI: Not connected";
-
-static lv_obj_t *lv_screen = NULL;
-// static lv_obj_t* lv_label_menu = NULL;
-static lv_obj_t *lv_label_main = NULL;
-
 /* --------------------------------------------------------------- */
 
 /* TODO: Move out */
@@ -111,80 +105,34 @@ int display_handler_init(DH *_DH) {
 
   return 0;
 }
-//
-// static void dh_build_base(void) {
-//   /* Create full-screen black background */
-//   lv_screen = lv_scr_act(); // Active screen
-//   lv_obj_set_style_bg_color(lv_screen, lv_color_black(),
-//                             LV_PART_MAIN | LV_STATE_DEFAULT);
-//
-//   /* Add label with ASCII art */
-//   lv_label_main = lv_label_create(lv_screen);
-//   lv_obj_align(lv_label_main, LV_ALIGN_CENTER, 0, 0);
-//   lv_obj_set_style_text_font(lv_label_main, &notosans_14, 0);
-//   lv_obj_set_style_text_color(lv_label_main, lv_color_hex(0x32CD32),
-//                               LV_PART_MAIN | LV_STATE_DEFAULT);
-// }
-//
-// static void dh_build_logo(void) {
-//   if (!lv_screen || !lv_label_main) {
-//     ESP_LOGW(TAG, "No screen or label initialized");
-//     return;
-//   }
-//   lv_label_set_text(lv_label_main, ASCII_ART_MAESTROSOFT_LOGO);
-// }
-
-/* We wanna make a handler that keeps track of rows/columns better
- * for the strings we want to display in a given space
- * Or just fuck all this shit and use lv_objects properly */
-// static void dh_build_sysinfo() {
-//   if (!lv_screen || !lv_label_main) {
-//     ESP_LOGW(TAG, "No screen or label initialized");
-//     return;
-//   }
-//   lv_label_set_text(lv_label_main, "");
-//
-//   /* Chip info structs */
-//   esp_chip_info_t chip_info;
-//   esp_chip_info(&chip_info);
-//   /* Get model info */
-//   snprintf(model_info, sizeof(model_info),
-//            "Model: ESP32-S3 with %i cores\n Features:%s%s%s%s%s\n",
-//            chip_info.cores,
-//            (chip_info.features & CHIP_FEATURE_WIFI_BGN) ? " 802.11bgn" : "",
-//            (chip_info.features & CHIP_FEATURE_BLE) ? " BLE" : "",
-//            (chip_info.features & CHIP_FEATURE_IEEE802154) ? " IEEE802154" :
-//            "", (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? " SD Flash" :
-//            "", (chip_info.features & CHIP_FEATURE_BT) ? " Bluetooth" : "");
-//
-//   char intro[] = "----------------------------------------------------\n"
-//                  "-------------------- ESPMaestro --------------------\n"
-//                  "----------------------------------------------------\n";
-//
-//   /* Get memory info */
-//   snprintf(mem_info, sizeof(mem_info),
-//            "Total: %2.2fkB\nInternal: %2.2fkB\nExternal: %2.2fkB\nLargest
-//            free " "block: %u bytes", (float)esp_get_free_heap_size() / 1024,
-//            (float)heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024,
-//            (float)heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024,
-//            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-//
-//   snprintf(screen_text, sizeof(screen_text),
-//            "%s\nSystem Time: %s\n%s\nMemory %s\n\n%s", intro,
-//            get_iso_time_string(), model_info, mem_info, wifi_info);
-//
-//   lv_label_set_text(lv_label_main, screen_text);
-// }
-//
 
 void display_handler_work(void *_null_for_now) {
   (void)_null_for_now;
 
+  /* Chip info structs */
+  esp_chip_info_t chip_info;
+  esp_chip_info(&chip_info);
+  /* Get model info */
+  snprintf(mem_info, sizeof(mem_info),
+           "Total: %2.2fkB\n"
+           "Internal: %2.2fkB\n"
+           "External: %2.2fkB\n"
+           "Largest free block: %u bytes",
+           (float)esp_get_free_heap_size() / 1024,
+           (float)heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024,
+           (float)heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024,
+           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+  char intro[] = "----------------------------------------------------\n"
+                 "-------------------- ESPMaestro --------------------\n"
+                 "----------------------------------------------------\n";
+  snprintf(screen_text, sizeof(screen_text),
+           "Hello Boss \n%s\nSystem Time: %s\n%s\nMemory %s\n\n Click the "
+           "buttons for more FAKTA",
+           intro, get_iso_time_string(), model_info, mem_info);
+
   if (lvgl_port_lock(-1)) {
     ui_init(&g_ui);
-    ui_set_body_text(&g_ui, "ASD \n\n"
-                            "New fancy UI\n"
-                            "Press buttons for extra fakta");
+    ui_set_body_text(&g_ui, screen_text);
     ui_set_footer_text(&g_ui, "UI init completed");
     lvgl_port_unlock();
   }
@@ -204,31 +152,4 @@ void display_handler_work(void *_null_for_now) {
     }
     vTaskDelayUntil(&x_last_wake, x_freq);
   }
-
-  // if (lvgl_port_lock(-1)) {
-  //   ESP_LOGI(TAG, "Do you see display? You should.");
-  //   lvgl_port_unlock();
-  // }
-  //
-  // /* Wait a bit so we can admire the beautiful logo
-  //  * This could run while other stuff inits like a loading screen */
-  // vTaskDelay(pdMS_TO_TICKS(5000));
-  // ESP_LOGI(TAG, "Sysinfo ticks incoming");
-  //
-  // TickType_t x_last_wake = xTaskGetTickCount();
-  // const TickType_t x_freq = pdMS_TO_TICKS(1000);
-  //
-  // size_t counter = 0;
-  // while (1) {
-  //   counter++;
-  //   ESP_LOGI(TAG, "System tick #%zu!", counter);
-  //
-  //   if (lvgl_port_lock(-1)) {
-  //     dh_build_sysinfo();
-  //     ESP_LOGI(TAG, "Do you see display? You should.");
-  //     lvgl_port_unlock();
-  //   }
-  //
-  //   vTaskDelayUntil(&x_last_wake, x_freq);
-  // }
 }
