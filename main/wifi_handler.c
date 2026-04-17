@@ -1,33 +1,34 @@
 #include "wifi_handler.h"
+#include "display_handler.h"
+
 #include "esp_err.h"
 #include "esp_event.h"
-#include "esp_wifi_default.h"
-#include "esp_wifi_types_generic.h"
-#include "freertos/idf_additions.h"
-#include "freertos/projdefs.h"
-
+#include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_sntp.h"
+#include "esp_wifi.h"
+#include "nvs_flash.h"
 
-#include <esp_log.h>
-#include <esp_wifi.h>
-#include <stdint.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include <string.h>
 #include <time.h>
 
-#include <esp_netif.h>
-#include <nvs_flash.h>
-
-#include "display_handler.h"
-
 static const char *TAG = "WIFI";
 
-/* Fetch current UTC time using SNTP */
+#define WIFI_USE_HARDCODED_FALLBACK 1
+static const char *FALLBACK_SSID = "YourMomDoesntWorkHereBro";
+static const char *FALLBACK_PASSWORD = "TheKingOfTheIronFistTournament";
+
+static bool g_wifi_started = false;
+static bool g_time_synced = false;
+
 static void fetch_time_utc(void) {
   ESP_LOGI("TIME", "Starting SNTP");
 
   esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
   esp_sntp_setservername(0, "pool.ntp.org");
-
   esp_sntp_init();
 
   time_t now = 0;
@@ -50,113 +51,110 @@ static void fetch_time_utc(void) {
   }
 }
 
+static bool wifi_apply_config_and_connect(const char *ssid,
+                                          const char *password) {
+  if (!ssid || !password || strlen(ssid) == 0 || strlen(password) == 0) {
+    display_handler_wifi_failed("SSID or password is empty");
+    return false;
+  }
+
+  wifi_config_t wificonf = {0};
+  snprintf((char *)wificonf.sta.ssid, sizeof(wificonf.sta.ssid), "%s", ssid);
+  snprintf((char *)wificonf.sta.password, sizeof(wificonf.sta.password), "%s",
+           password);
+
+  display_handler_wifi_connecting();
+
+  esp_err_t err = esp_wifi_disconnect();
+  if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_CONNECT &&
+      err != ESP_ERR_WIFI_CONN) {
+    ESP_LOGW(TAG, "esp_wifi_disconnect returned: %s", esp_err_to_name(err));
+  }
+
+  err = esp_wifi_set_config(WIFI_IF_STA, &wificonf);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "esp_wifi_set_config failed: %s", esp_err_to_name(err));
+    display_handler_wifi_failed("Failed to apply WiFi config");
+    return false;
+  }
+
+  if (!g_wifi_started) {
+    err = esp_wifi_start();
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "esp_wifi_start failed: %s", esp_err_to_name(err));
+      display_handler_wifi_failed("Failed to start WiFi");
+      return false;
+    }
+    g_wifi_started = true;
+  }
+
+  err = esp_wifi_connect();
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
+    display_handler_wifi_failed("Failed to start WiFi connection");
+    return false;
+  }
+
+  return true;
+}
+
 void wh_start(void *args) {
-  nvs_flash_init();
-  esp_netif_init();
-  esp_event_loop_create_default();
+  (void)args;
+
+  ESP_ERROR_CHECK(nvs_flash_init());
+  ESP_ERROR_CHECK(esp_netif_init());
+  ESP_ERROR_CHECK(esp_event_loop_create_default());
   esp_netif_create_default_wifi_sta();
 
-  ESP_LOGI(TAG, "Hej");
-
-  esp_err_t err;
-
   wifi_init_config_t wifiinitcfg = WIFI_INIT_CONFIG_DEFAULT();
+  ESP_ERROR_CHECK(esp_wifi_init(&wifiinitcfg));
+  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
 
-  ESP_ERROR_CHECK(err = esp_wifi_init(&wifiinitcfg));
-  if (err != ESP_OK) {
-    return;
-  }
+#if WIFI_USE_HARDCODED_FALLBACK
+  wifi_apply_config_and_connect(FALLBACK_SSID, FALLBACK_PASSWORD);
+#endif
 
-  ESP_LOGI(TAG, "esp_wifi_init err: %d\n", err);
-
-  wifi_config_t wificonf = {
-      .sta =
-          {
-              .ssid = "YourMomDoesntWorkHereBro",
-              .password = "TheKingOfTheIronFistTournament",
-          },
-  };
-
-  ESP_ERROR_CHECK(err = esp_wifi_set_mode(WIFI_MODE_STA));
-  if (err != ESP_OK) {
-    return;
-  }
-
-  ESP_LOGI(TAG, "esp_wifi_mode err: %d\n", err);
-
-  ESP_ERROR_CHECK(err = esp_wifi_set_config(WIFI_IF_STA, &wificonf));
-  if (err != ESP_OK) {
-    return;
-  }
-
-  ESP_LOGI(TAG, "esp_wifi_set_config err: %d\n", err);
-
-  ESP_ERROR_CHECK(err = esp_wifi_start());
-  if (err != ESP_OK) {
-    return;
-  }
-
-  ESP_LOGI(TAG, "esp_wifi_start err: %d\n", err);
-
-  ESP_ERROR_CHECK(err = esp_wifi_connect());
-  if (err != ESP_OK) {
-    return;
-  }
-
-  ESP_LOGI(TAG, "esp_wifi_connect err: %d\n", err);
-
-  esp_netif_ip_info_t ip_info;
   esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-
+  esp_netif_ip_info_t ip_info;
   wifi_ap_record_t ap_info;
 
-  bool time_synced = false;
-
   while (1) {
+    char requested_ssid[64] = {0};
+    char requested_password[64] = {0};
+
+    if (display_handler_consume_wifi_connect_request(
+            requested_ssid, sizeof(requested_ssid), requested_password,
+            sizeof(requested_password))) {
+      ESP_LOGI(TAG, "Received UI WiFi request for SSID: %s", requested_ssid);
+      wifi_apply_config_and_connect(requested_ssid, requested_password);
+      g_time_synced = false;
+    }
 
     if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-      ESP_LOGI(TAG, "SSID: %s", ap_info.ssid);
-
-      /* Check that netif exists, that we receieve IP info and that it is not 0
-       */
       if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
         if (ip_info.ip.addr != 0) {
-
           char ip_str[16];
-          /* Convert IPv4 to string using ESP-IDF macros. IPSTR -> "%d.%d.%d.%d"
-           * and IP2STR -> extracts the 4 numerical segments from ip_info.ip */
           snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
+          display_handler_wifi_status(true, (const char *)ap_info.ssid, ip_str,
+                                      ap_info.rssi);
 
-          ESP_LOGI(TAG, "IP Address: %s", ip_str);
-
-          display_handler_wifi_status(true, (const char *)ap_info.ssid, ip_str);
-
-          /* Sync time only once after we have a valid IP */
-          if (!time_synced) {
+          if (!g_time_synced) {
             fetch_time_utc();
-            time_synced = true;
+            g_time_synced = true;
           }
-
         } else {
-          ESP_LOGI(TAG, "Fetching IP Address...");
-          display_handler_wifi_status(true, (const char *)ap_info.ssid,
-                                      "Fetching IP Address...");
+          display_handler_wifi_connecting();
         }
       } else {
-        ESP_LOGI(TAG, "Fetching IP Address...");
-        display_handler_wifi_status(true, (const char *)ap_info.ssid,
-                                    "Fetching IP Address...");
+        display_handler_wifi_connecting();
       }
     } else {
-      ESP_LOGI(TAG, "Not connected");
-      display_handler_wifi_status(false, NULL, NULL);
-
-      /* Reset time sync if connection drops */
-      time_synced = false;
+      display_handler_wifi_status(false, NULL, NULL, -100);
+      g_time_synced = false;
     }
 
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
 
-void wh_dispose() {}
+void wh_dispose(void) {}

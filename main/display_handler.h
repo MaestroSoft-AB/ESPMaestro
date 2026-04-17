@@ -5,7 +5,6 @@
 
 #define DISPLAY_SIZE_WIDTH 1024
 #define DISPLAY_SIZE_HEIGHT 600
-/* Lazy calc on 14px mono font on 1024x600 display */
 #define DISPLAY_MAX_CHAR_PER_ROW 73
 #define DISPLAY_MAX_CHAR_ROWS 42
 
@@ -13,15 +12,16 @@ typedef struct {
 
 } DH;
 
-/* ======================= INTERFACE ======================= */
-
 int display_handler_init(DH *_DH);
-
 void display_handler_work(void *_null_for_now);
+
 void display_handler_wifi_status(bool connected, const char *ssid,
-                                 const char *ip);
+                                 const char *ip, int rssi);
+void display_handler_wifi_connecting(void);
+void display_handler_wifi_failed(const char *reason);
 
-// void dh_dispose(DH* _DH);
+bool display_handler_consume_wifi_connect_request(char *ssid, unsigned ssid_sz,
+                                                  char *password,
+                                                  unsigned password_sz);
 
-/* ========================================================= */
 #endif
