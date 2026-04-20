@@ -1,8 +1,9 @@
 #ifndef __ESPM_DISPLAY_HANDLER_H__
 #define __ESPM_DISPLAY_HANDLER_H__
 
+#include "wifi_handler.h"
 #include <stdbool.h>
-
+#include <stdlib.h>
 #define DISPLAY_SIZE_WIDTH 1024
 #define DISPLAY_SIZE_HEIGHT 600
 /* Lazy calc on 14px mono font on 1024x600 display */
@@ -12,6 +13,22 @@
 typedef struct {
 
 } DH;
+
+typedef struct {
+  bool scan_ready;
+  char scan_options[1024];
+
+  bool status_ready;
+  bool connected;
+  char ssid[33];
+  char ip[16];
+  char message[64];
+} DH_wifi_status;
+
+/*-----------Callbacks-----*/
+void on_wifi_status(bool _connected, const char *_ssid, const char *_ip,
+                    const char *_message);
+void on_wifi_scan_done(const Wifi_Handler_ap *_aps, uint16_t _count);
 
 /* ======================= INTERFACE ======================= */
 

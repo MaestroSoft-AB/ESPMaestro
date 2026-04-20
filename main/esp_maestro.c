@@ -21,16 +21,15 @@ void app_main(void) {
   } else {
 
     /*  Start display worker task only on init success */
-    if (xTaskCreate(display_handler_work, "display_handler_work", 8192, NULL, 5,
-                    NULL) != pdPASS) {
+    if (xTaskCreate(display_handler_work, "display_handler_work", 12288, NULL,
+                    5, NULL) != pdPASS) {
       ESP_LOGE(TAG, "Failed to create display_handler_work task");
     }
   }
 
-  /* Start wifi handler as task instead of calling it directly, assuming
-   * wh_start has a task-compatible signature: void func(void*) */
-  if (xTaskCreate(wh_start, "wh_start", 8192, NULL, 4, NULL) != pdPASS) {
-    ESP_LOGE(TAG, "Failed to create wh_start task");
+  if (wifi_handler_init(on_wifi_scan_done, on_wifi_status) != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to init wifi manager");
+    return;
   }
 }
 
