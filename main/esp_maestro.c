@@ -22,7 +22,7 @@ void app_main(void) {
 
     /*  Start display worker task only on init success */
     if (xTaskCreate(display_handler_work, "display_handler_work", 12288, NULL,
-                    5, NULL) != pdPASS) {
+                    3, NULL) != pdPASS) {
       ESP_LOGE(TAG, "Failed to create display_handler_work task");
     }
   }

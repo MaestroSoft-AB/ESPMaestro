@@ -1,15 +1,23 @@
+/******************** ESPMaestro ********************/
+/* Copyright MaestroSoft Corp AB Inc LLC Unlimited. */
+
 #include "display_handler.h"
-#include "gt911.h"     // Header for touch screen operations (GT911)
-#include "lvgl_port.h" // LVGL porting functions for integration
+#include "esp_chip_info.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/projdefs.h"
+#include "freertos/task.h"
+#include "gt911.h"
+#include "lvgl_port.h"
 #include "misc/lv_color.h"
-#include "rgb_lcd_port.h" // Header for Waveshare RGB LCD driver
+#include "rgb_lcd_port.h"
+#include "text_contents.h"
 #include "ui.h"
 #include "widgets/lv_label.h"
-// #include "lv_conf_internal.h"
-#include "text_contents.h"
 #include "wifi_handler.h"
-/* TODO: Move out*/
-#include "esp_chip_info.h"
+
+#include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 /* --------------------------------------------------------------- */
@@ -25,16 +33,73 @@ static esp_lcd_touch_handle_t tp_handle = NULL;
 static char screen_text[DISPLAY_MAX_CHAR_ROWS * DISPLAY_MAX_CHAR_PER_ROW] = {0};
 static char model_info[87] = {0};
 static char iso_string[20] = {0};
-// static char* iso_string_offset = NULL;
 static char mem_info[91] = {0};
-// static char* mem_info_offset = NULL;
+
 /* -------------------------------WIFI CALLBACKS----------------------- */
 static DH_wifi_status g_wifi_status = {0};
 static SemaphoreHandle_t g_wifi_status_mutex = NULL;
 
-void on_wifi_scan_done(const Wifi_Handler_ap *_aps, uint16_t _count) {
-  if (!g_wifi_status_mutex)
+/* -------------------------------PERF OVERLAY------------------------- */
+static lv_obj_t *g_perf_label = NULL;
+static uint32_t g_perf_frame_count = 0;
+static uint32_t g_perf_last_report_ms = 0;
+
+static void perf_overlay_init(void) {
+  if (g_perf_label) {
     return;
+  }
+
+  lv_obj_t *screen = lv_scr_act();
+  g_perf_label = lv_label_create(screen);
+
+  lv_obj_set_style_bg_opa(g_perf_label, LV_OPA_70, 0);
+  lv_obj_set_style_bg_color(g_perf_label, lv_color_black(), 0);
+  lv_obj_set_style_text_color(g_perf_label, lv_color_white(), 0);
+  lv_obj_set_style_border_width(g_perf_label, 0, 0);
+  lv_obj_set_style_shadow_width(g_perf_label, 0, 0);
+  lv_obj_set_style_outline_width(g_perf_label, 0, 0);
+  lv_obj_set_style_radius(g_perf_label, 4, 0);
+  lv_obj_set_style_pad_left(g_perf_label, 6, 0);
+  lv_obj_set_style_pad_right(g_perf_label, 6, 0);
+  lv_obj_set_style_pad_top(g_perf_label, 4, 0);
+  lv_obj_set_style_pad_bottom(g_perf_label, 4, 0);
+
+  lv_obj_align(g_perf_label, LV_ALIGN_TOP_RIGHT, -6, 6);
+  lv_label_set_text(g_perf_label, "FPS: --\nframe: -- ms\nheap: --");
+
+  g_perf_last_report_ms = lv_tick_get();
+  g_perf_frame_count = 0;
+}
+
+static void perf_overlay_tick(void) {
+  if (!g_perf_label) {
+    return;
+  }
+
+  g_perf_frame_count++;
+
+  uint32_t now = lv_tick_get();
+  uint32_t elapsed = now - g_perf_last_report_ms;
+
+  if (elapsed >= 1000) {
+    uint32_t fps = g_perf_frame_count;
+    uint32_t frame_ms = fps ? (1000U / fps) : 0;
+    size_t free_heap = esp_get_free_heap_size();
+
+    lv_label_set_text_fmt(g_perf_label, "FPS: %lu\nframe: %lu ms\nheap: %u",
+                          (unsigned long)fps, (unsigned long)frame_ms,
+                          (unsigned)free_heap);
+
+    g_perf_frame_count = 0;
+    g_perf_last_report_ms = now;
+  }
+}
+
+/* -------------------------------WIFI CALLBACKS----------------------- */
+void on_wifi_scan_done(const Wifi_Handler_ap *_aps, uint16_t _count) {
+  if (!g_wifi_status_mutex) {
+    return;
+  }
 
   if (xSemaphoreTake(g_wifi_status_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
     return;
@@ -43,8 +108,9 @@ void on_wifi_scan_done(const Wifi_Handler_ap *_aps, uint16_t _count) {
   g_wifi_status.scan_options[0] = '\0';
 
   for (uint16_t i = 0; i < _count; i++) {
-    if (_aps[i].ssid[0] == '\0')
+    if (_aps[i].ssid[0] == '\0') {
       continue;
+    }
 
     strncat(g_wifi_status.scan_options, _aps[i].ssid,
             sizeof(g_wifi_status.scan_options) -
@@ -60,6 +126,7 @@ void on_wifi_scan_done(const Wifi_Handler_ap *_aps, uint16_t _count) {
   if (g_wifi_status.scan_options[0] == '\0') {
     strncpy(g_wifi_status.scan_options, "No networks found",
             sizeof(g_wifi_status.scan_options) - 1);
+    g_wifi_status.scan_options[sizeof(g_wifi_status.scan_options) - 1] = '\0';
   }
 
   g_wifi_status.scan_ready = true;
@@ -69,8 +136,9 @@ void on_wifi_scan_done(const Wifi_Handler_ap *_aps, uint16_t _count) {
 
 void on_wifi_status(bool _connected, const char *_ssid, const char *_ip,
                     const char *_message) {
-  if (!g_wifi_status_mutex)
+  if (!g_wifi_status_mutex) {
     return;
+  }
 
   if (xSemaphoreTake(g_wifi_status_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
     return;
@@ -90,9 +158,7 @@ void on_wifi_status(bool _connected, const char *_ssid, const char *_ip,
 }
 
 /******************************************************************/
-/* TODO: Move out */
 static char *get_iso_time_string(void) {
-  /* Get current time string */
   time_t epoch = time(NULL);
   struct tm *tm = gmtime(&epoch);
   if (tm) {
@@ -102,14 +168,17 @@ static char *get_iso_time_string(void) {
     int hour = tm->tm_hour;
     int min = tm->tm_min;
     int sec = tm->tm_sec;
-    if (snprintf(iso_string, 20, "%04d-%02d-%02dT%02d:%02d:%02d", year, month,
-                 day, hour, min, sec) < 0) {
+
+    if (snprintf(iso_string, sizeof(iso_string),
+                 "%04d-%02d-%02dT%02d:%02d:%02d", year, month, day, hour, min,
+                 sec) < 0) {
       ESP_LOGW(TAG, "Failed to parse current time");
-      memset(iso_string, 0, 20), sprintf(iso_string, "N/A");
+      memset(iso_string, 0, sizeof(iso_string));
+      snprintf(iso_string, sizeof(iso_string), "N/A");
     }
   } else {
     ESP_LOGW(TAG, "Failed to create tm struct from epoch");
-    sprintf(iso_string, "N/A");
+    snprintf(iso_string, sizeof(iso_string), "N/A");
   }
 
   return iso_string;
@@ -124,41 +193,26 @@ void display_handler_wifi_status(bool connected, const char *ssid,
 }
 
 int display_handler_init(DH *_DH) {
-  /* _DH is currently unused.
-   * Cast to void so the compiler does not warn about it. */
   (void)_DH;
 
-  /* LVGL core must be initialized BEFORE the LVGL port layer.
-   * The port layer usually creates/registers display and input devices
-   * and assumes LVGL is already ready. */
-  lv_init();
-
-  /* Initialize the touch controller first.
-   * This should return a valid touch handle, or NULL on failure. */
   tp_handle = touch_gt911_init();
   if (tp_handle == NULL) {
     ESP_LOGE(TAG, "Failed to initialize GT911 touch controller");
     return -1;
   }
 
-  /* Initialize the RGB LCD panel.
-   * This should return a valid panel handle, or NULL on failure. */
   panel_handle = waveshare_esp32_s3_rgb_lcd_init();
   if (panel_handle == NULL) {
     ESP_LOGE(TAG, "Failed to initialize RGB LCD panel");
     return -1;
   }
 
-  /* Now that LVGL core is initialized and both hardware handles exist,
-   * initialize the LVGL port integration layer. */
   esp_err_t err = lvgl_port_init(panel_handle, tp_handle);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "lvgl_port_init failed");
     return -1;
   }
 
-  /* Turn on the display backlight only after panel init succeeded.
-   * Otherwise you may light up a panel that is not actually ready. */
   wavesahre_rgb_lcd_bl_on();
 
   ESP_LOGI(TAG, "Display handler initialized successfully");
@@ -178,47 +232,61 @@ void display_handler_work(void *_null_for_now) {
   if (lvgl_port_lock(-1)) {
     ui_init(&g_ui);
     ui_set_footer_text(&g_ui, "UI init completed");
+    // perf_overlay_init();
     lvgl_port_unlock();
   }
 
   ESP_LOGI(TAG, "UI initialized, starting loop..");
+
   TickType_t x_last_wake = xTaskGetTickCount();
-  const TickType_t x_freq = pdMS_TO_TICKS(50);
+  const TickType_t x_freq =
+      pdMS_TO_TICKS(33); /* ~30 Hz overlay/update cadence */
 
   while (1) {
+    bool need_ui_update = false;
+
+    if (g_wifi_status_mutex &&
+        xSemaphoreTake(g_wifi_status_mutex, 0) == pdTRUE) {
+      need_ui_update = g_wifi_status.scan_ready || g_wifi_status.status_ready;
+      xSemaphoreGive(g_wifi_status_mutex);
+    }
+
     if (lvgl_port_lock(-1)) {
-      ui_tick(&g_ui);
+      if (need_ui_update) {
+        if (g_wifi_status_mutex &&
+            xSemaphoreTake(g_wifi_status_mutex, 0) == pdTRUE) {
 
-      if (g_wifi_status_mutex &&
-          xSemaphoreTake(g_wifi_status_mutex, 0) == pdTRUE) {
-
-        if (g_wifi_status.scan_ready) {
-          ui_set_wifi_network_list(&g_ui, g_wifi_status.scan_options);
-          ui_set_wifi_form_status(&g_ui, "Scan complete", false);
-          g_wifi_status.scan_ready = false;
-        }
-
-        if (g_wifi_status.status_ready) {
-          if (g_wifi_status.connected) {
-            ui_set_wifi_status(&g_ui, true, g_wifi_status.ssid,
-                               g_wifi_status.ip);
-            ui_set_wifi_form_status(&g_ui, "Connected successfully", false);
-            ui_set_wifi_busy(&g_ui, false);
-          } else {
-            ui_set_wifi_form_status(&g_ui,
-                                    g_wifi_status.message[0]
-                                        ? g_wifi_status.message
-                                        : "Disconnected",
-                                    true);
-            ui_set_wifi_busy(&g_ui, false);
-            ui_set_wifi_status(&g_ui, false, NULL, NULL);
+          if (g_wifi_status.scan_ready) {
+            ui_set_wifi_network_list(&g_ui, g_wifi_status.scan_options);
+            ui_set_wifi_form_status(&g_ui, "Scan complete", false);
+            g_wifi_status.scan_ready = false;
           }
 
-          g_wifi_status.status_ready = false;
-        }
+          if (g_wifi_status.status_ready) {
+            if (g_wifi_status.connected) {
+              ui_set_wifi_status(&g_ui, true, g_wifi_status.ssid,
+                                 g_wifi_status.ip);
+              ui_set_wifi_form_status(&g_ui, "Connected successfully", false);
+              ui_set_wifi_busy(&g_ui, false);
+            } else {
+              ui_set_wifi_form_status(&g_ui,
+                                      g_wifi_status.message[0]
+                                          ? g_wifi_status.message
+                                          : "Disconnected",
+                                      true);
+              ui_set_wifi_busy(&g_ui, false);
+              ui_set_wifi_status(&g_ui, false, NULL, NULL);
+            }
 
-        xSemaphoreGive(g_wifi_status_mutex);
+            g_wifi_status.status_ready = false;
+          }
+
+          xSemaphoreGive(g_wifi_status_mutex);
+        }
       }
+
+      /* Perf overlay tick */
+      // perf_overlay_tick();
 
       lvgl_port_unlock();
     }
