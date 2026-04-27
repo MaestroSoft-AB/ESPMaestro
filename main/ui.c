@@ -875,8 +875,8 @@ static void wifi_ta_event_cb(lv_event_t *_event) {
   if (code == LV_EVENT_FOCUSED) {
     lv_keyboard_set_textarea(_UI->wifi_keyboard, ta);
     lv_obj_clear_flag(_UI->wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
-
     lv_obj_set_height(_UI->wifi_keyboard, 160);
+    lv_obj_update_layout(_UI->wifi_keyboard);
 
     if (_UI->wifi_form) {
       lv_obj_set_flex_grow(_UI->wifi_form, 0);
@@ -885,7 +885,6 @@ static void wifi_ta_event_cb(lv_event_t *_event) {
   } else if (code == LV_EVENT_DEFOCUSED) {
     lv_keyboard_set_textarea(_UI->wifi_keyboard, NULL);
     lv_obj_add_flag(_UI->wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
-
     if (_UI->wifi_form) {
       lv_obj_set_flex_grow(_UI->wifi_form, 1);
     }
