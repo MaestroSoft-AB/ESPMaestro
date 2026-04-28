@@ -111,6 +111,9 @@ static void ui_build_nav(UI *_UI) {
   lv_obj_set_layout(_UI->nav, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(_UI->nav, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(_UI->nav, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(_UI->nav, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(_UI->nav, LV_OBJ_FLAG_SCROLL_CHAIN);
+  lv_obj_set_scrollbar_mode(_UI->nav, LV_SCROLLBAR_MODE_OFF);
 
   _UI->nav_home_btn = ui_create_nav_button(_UI->nav, LV_SYMBOL_HOME, UI_SCREEN_HOME, _UI);
   _UI->nav_forecast_btn = ui_create_nav_button(_UI->nav, LV_SYMBOL_UPLOAD, UI_SCREEN_FORECAST, _UI);
@@ -121,6 +124,9 @@ static void ui_build_nav(UI *_UI) {
   lv_obj_set_height(spacer, 1);
   lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(spacer, 0, 0);
+  lv_obj_clear_flag(spacer, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(spacer, LV_OBJ_FLAG_SCROLL_CHAIN);
+  lv_obj_set_scrollbar_mode(spacer, LV_SCROLLBAR_MODE_OFF);
 
   _UI->nav_settings_btn = ui_create_nav_button(_UI->nav, LV_SYMBOL_SETTINGS, UI_SCREEN_SETTINGS, _UI);
   _UI->nav_wifi_btn = ui_create_nav_button(_UI->nav, LV_SYMBOL_WIFI, UI_SCREEN_WIFI, _UI);
@@ -131,6 +137,9 @@ static void ui_build_nav(UI *_UI) {
   lv_obj_set_style_bg_color(_UI->wifi_indicator, lv_color_hex(C_GREEN), 0);
   lv_obj_set_style_border_width(_UI->wifi_indicator, 0, 0);
   lv_obj_add_flag(_UI->wifi_indicator, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(_UI->wifi_indicator, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(_UI->wifi_indicator, LV_OBJ_FLAG_SCROLL_CHAIN);
+  lv_obj_set_scrollbar_mode(_UI->wifi_indicator, LV_SCROLLBAR_MODE_OFF);
 }
 
 static void ui_build_content(UI *_UI) {
@@ -169,6 +178,9 @@ static lv_obj_t *ui_create_nav_button(lv_obj_t *_parent, const char *_text, UI_S
   lv_obj_set_style_bg_color(btn, lv_color_hex(C_CARD), 0);
   lv_obj_add_event_cb(btn, nav_event_cb, LV_EVENT_CLICKED, _UI);
   lv_obj_set_user_data(btn, (void *)(uintptr_t)_screen);
+  lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLL_CHAIN);
+  lv_obj_set_scrollbar_mode(btn, LV_SCROLLBAR_MODE_OFF);
   lv_obj_t *label = lv_label_create(btn);
   lv_label_set_text(label, _text);
   lv_obj_set_style_text_color(label, lv_color_white(), 0);
@@ -533,13 +545,20 @@ static void ui_build_screen_wifi(UI *_UI) {
   char buf[160]; snprintf(buf, sizeof(buf), "Connected: %s\nIP Address: %s", _UI->wifi_connected ? _UI->wifi_ssid : "Not connected", _UI->wifi_connected ? _UI->wifi_ip : "-"); ui_create_label(connected, buf, lv_color_white());
   lv_obj_t *net_title = ui_create_label(panel, "Available Networks", lv_color_white()); lv_obj_align(net_title, LV_ALIGN_TOP_LEFT, 0, 136);
   _UI->wifi_scan_btn = ui_create_button(panel, "Scan", lv_color_hex(C_BLUE)); lv_obj_set_size(_UI->wifi_scan_btn, 100, 36); lv_obj_align(_UI->wifi_scan_btn, LV_ALIGN_TOP_RIGHT, 0, 128); lv_obj_add_event_cb(_UI->wifi_scan_btn, wifi_scan_btn_event_cb, LV_EVENT_CLICKED, _UI);
-  lv_obj_t *list = lv_obj_create(panel); lv_obj_set_size(list, LV_PCT(100), 180); lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, 174); lv_obj_set_style_bg_color(list, lv_color_hex(C_CARD),0); lv_obj_set_style_border_color(list, lv_color_hex(C_BORDER),0); lv_obj_set_style_border_width(list,1,0); lv_obj_set_style_radius(list,8,0); lv_obj_set_style_pad_all(list,8,0); lv_obj_clear_flag(list, LV_OBJ_FLAG_SCROLLABLE);
-  for (int i=0;i<5;i++){_UI->wifi_network_rows[i]=lv_btn_create(list);lv_obj_set_size(_UI->wifi_network_rows[i],LV_PCT(100),30);lv_obj_set_pos(_UI->wifi_network_rows[i],0,i*34);lv_obj_set_style_bg_color(_UI->wifi_network_rows[i],lv_color_hex(C_PANEL),0);lv_obj_set_style_radius(_UI->wifi_network_rows[i],7,0);lv_obj_set_style_shadow_width(_UI->wifi_network_rows[i],0,0);lv_obj_set_user_data(_UI->wifi_network_rows[i],(void *)(uintptr_t)i);lv_obj_add_event_cb(_UI->wifi_network_rows[i],wifi_network_row_event_cb,LV_EVENT_CLICKED,_UI);_UI->wifi_network_labels[i]=ui_create_label(_UI->wifi_network_rows[i],"Scan for networks...",lv_color_hex(C_MUTED));lv_obj_align(_UI->wifi_network_labels[i],LV_ALIGN_LEFT_MID,8,0);} 
+  lv_obj_t *list = lv_obj_create(panel); lv_obj_set_size(list, LV_PCT(100), 150); lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, 174); lv_obj_set_style_bg_color(list, lv_color_hex(C_CARD),0); lv_obj_set_style_border_color(list, lv_color_hex(C_BORDER),0); lv_obj_set_style_border_width(list,1,0); lv_obj_set_style_radius(list,8,0); lv_obj_set_style_pad_all(list,8,0); lv_obj_clear_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+  for (int i=0;i<4;i++){_UI->wifi_network_rows[i]=lv_btn_create(list);lv_obj_set_size(_UI->wifi_network_rows[i],LV_PCT(100),30);lv_obj_set_pos(_UI->wifi_network_rows[i],0,i*34);lv_obj_set_style_bg_color(_UI->wifi_network_rows[i],lv_color_hex(C_PANEL),0);lv_obj_set_style_radius(_UI->wifi_network_rows[i],7,0);lv_obj_set_style_shadow_width(_UI->wifi_network_rows[i],0,0);lv_obj_set_user_data(_UI->wifi_network_rows[i],(void *)(uintptr_t)i);lv_obj_add_event_cb(_UI->wifi_network_rows[i],wifi_network_row_event_cb,LV_EVENT_CLICKED,_UI);_UI->wifi_network_labels[i]=ui_create_label(_UI->wifi_network_rows[i],"Scan for networks...",lv_color_hex(C_MUTED));lv_obj_align(_UI->wifi_network_labels[i],LV_ALIGN_LEFT_MID,8,0);} 
   _UI->wifi_prev_btn = ui_create_button(panel, "Prev", lv_color_hex(0x374151)); lv_obj_set_size(_UI->wifi_prev_btn, 76, 34); lv_obj_align(_UI->wifi_prev_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0); lv_obj_add_event_cb(_UI->wifi_prev_btn, wifi_prev_page_event_cb, LV_EVENT_CLICKED, _UI);
   _UI->wifi_page_label = ui_create_label(panel, "1 / 1", lv_color_hex(C_MUTED)); lv_obj_align(_UI->wifi_page_label, LV_ALIGN_BOTTOM_MID, 0, -8);
   _UI->wifi_next_btn = ui_create_button(panel, "Next", lv_color_hex(0x374151)); lv_obj_set_size(_UI->wifi_next_btn, 76, 34); lv_obj_align(_UI->wifi_next_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0); lv_obj_add_event_cb(_UI->wifi_next_btn, wifi_next_page_event_cb, LV_EVENT_CLICKED, _UI);
   _UI->wifi_status_label = ui_create_label(panel, "", lv_color_white()); lv_obj_align(_UI->wifi_status_label, LV_ALIGN_BOTTOM_MID, 0, -38);
   ui_update_wifi_rows(_UI);
+
+  if (_UI->wifi_network_count <= 0) {
+    lv_obj_add_flag(list, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_UI->wifi_prev_btn, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_UI->wifi_next_btn, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_UI->wifi_page_label, LV_OBJ_FLAG_HIDDEN);
+  }
 }
 
 static void ui_build_facility_page(UI *_UI) {
@@ -550,14 +569,14 @@ static void ui_build_facility_page(UI *_UI) {
     _UI->facility_name_ta = ui_create_form_field(_UI->facility_form, "Facility Name", "Enter facility name");
     _UI->facility_country_ta = ui_create_form_field(_UI->facility_form, "Country", "Sweden");
     _UI->facility_address_ta = ui_create_form_field(_UI->facility_form, "Address", "Street address");
+  } else if (_UI->facility_page == 1) {
     _UI->facility_city_ta = ui_create_form_field(_UI->facility_form, "City", "City");
     _UI->facility_zip_ta = ui_create_form_field(_UI->facility_form, "Postal Code", "ZIP / Postal code");
-  } else {
     _UI->facility_state_ta = ui_create_form_field(_UI->facility_form, "Region", "State / Region");
+  } else {
     _UI->facility_timezone_ta = ui_create_form_field(_UI->facility_form, "Timezone", "Europe/Stockholm");
     _UI->facility_type_ta = ui_create_form_field(_UI->facility_form, "Facility Type", "Residential / Commercial");
     _UI->facility_capacity_ta = ui_create_form_field(_UI->facility_form, "Capacity", "Main fuse / power capacity");
-    _UI->facility_operator_ta = ui_create_form_field(_UI->facility_form, "Operator", "Grid / energy provider");
   }
 }
 
@@ -604,7 +623,7 @@ static void ui_update_wifi_rows(UI *_UI) {
     return;
   }
 
-  int total_pages = (_UI->wifi_network_count + 4) / 5;
+  int total_pages = (_UI->wifi_network_count + 3) / 4;
 
   if (total_pages < 1) {
     total_pages = 1;
@@ -613,13 +632,13 @@ static void ui_update_wifi_rows(UI *_UI) {
   if (_UI->wifi_network_page >= total_pages) {
     _UI->wifi_network_page = total_pages - 1;
   }
-  for(int i=0;i<5;i++){ if(!_UI->wifi_network_labels[i]) continue; int idx=_UI->wifi_network_page*5+i; if(idx<_UI->wifi_network_count){lv_label_set_text(_UI->wifi_network_labels[i], _UI->wifi_networks[idx]); lv_obj_clear_state(_UI->wifi_network_rows[i], LV_STATE_DISABLED); lv_obj_set_style_text_color(_UI->wifi_network_labels[i], lv_color_white(),0);} else {lv_label_set_text(_UI->wifi_network_labels[i], _UI->wifi_network_count?"":"Scan for networks..."); lv_obj_add_state(_UI->wifi_network_rows[i], LV_STATE_DISABLED); lv_obj_set_style_text_color(_UI->wifi_network_labels[i], lv_color_hex(C_MUTED),0);} }
+  for(int i=0;i<4;i++){ if(!_UI->wifi_network_labels[i]) continue; int idx=_UI->wifi_network_page*4+i; if(idx<_UI->wifi_network_count){lv_label_set_text(_UI->wifi_network_labels[i], _UI->wifi_networks[idx]); lv_obj_clear_state(_UI->wifi_network_rows[i], LV_STATE_DISABLED); lv_obj_set_style_text_color(_UI->wifi_network_labels[i], lv_color_white(),0);} else {lv_label_set_text(_UI->wifi_network_labels[i], _UI->wifi_network_count?"":"Scan for networks..."); lv_obj_add_state(_UI->wifi_network_rows[i], LV_STATE_DISABLED); lv_obj_set_style_text_color(_UI->wifi_network_labels[i], lv_color_hex(C_MUTED),0);} }
   if(_UI->wifi_page_label){char b[24];snprintf(b,sizeof(b),"%d / %d",_UI->wifi_network_page+1,total_pages);lv_label_set_text(_UI->wifi_page_label,b);} }
 
 static void wifi_scan_btn_event_cb(lv_event_t *_event) { UI *_UI=lv_event_get_user_data(_event); if(!_UI)return; ui_set_wifi_form_status(_UI,"Scanning...",false); if(wifi_handler_scan()!=ESP_OK) ui_set_wifi_form_status(_UI,"Failed to start scan",true); }
-static void wifi_network_row_event_cb(lv_event_t *_event) { UI *_UI=lv_event_get_user_data(_event); lv_obj_t*row=lv_event_get_target(_event); if(!_UI||!row)return; int local=(int)(uintptr_t)lv_obj_get_user_data(row); int idx=_UI->wifi_network_page*5+local; if(idx>=0&&idx<_UI->wifi_network_count) ui_open_wifi_password(_UI, idx); }
+static void wifi_network_row_event_cb(lv_event_t *_event) { UI *_UI=lv_event_get_user_data(_event); lv_obj_t*row=lv_event_get_target(_event); if(!_UI||!row)return; int local=(int)(uintptr_t)lv_obj_get_user_data(row); int idx=_UI->wifi_network_page*4+local; if(idx>=0&&idx<_UI->wifi_network_count) ui_open_wifi_password(_UI, idx); }
 static void wifi_prev_page_event_cb(lv_event_t *_event) { UI *_UI=lv_event_get_user_data(_event); if(_UI&&_UI->wifi_network_page>0){_UI->wifi_network_page--;ui_update_wifi_rows(_UI);} }
-static void wifi_next_page_event_cb(lv_event_t *_event) { UI *_UI=lv_event_get_user_data(_event); if(!_UI)return; int pages=(_UI->wifi_network_count+4)/5; if(pages<1)pages=1; if(_UI->wifi_network_page<pages-1){_UI->wifi_network_page++;ui_update_wifi_rows(_UI);} }
+static void wifi_next_page_event_cb(lv_event_t *_event) { UI *_UI=lv_event_get_user_data(_event); if(!_UI)return; int pages=(_UI->wifi_network_count+3)/4; if(pages<1)pages=1; if(_UI->wifi_network_page<pages-1){_UI->wifi_network_page++;ui_update_wifi_rows(_UI);} }
 
 static void ui_open_wifi_password(UI *_UI, int _idx) {
   _UI->wifi_network_selected = _idx; _UI->wifi_connecting_index = _idx;
@@ -637,12 +656,33 @@ static void wifi_cancel_event_cb(lv_event_t *_event) { UI *_UI=lv_event_get_user
 static void connect_event_cb(lv_event_t *_event) { UI *_UI=lv_event_get_user_data(_event); if(!_UI)return; const char *ssid=_UI->wifi_networks[_UI->wifi_network_selected]; const char *pass=_UI->wifi_pass_ta?lv_textarea_get_text(_UI->wifi_pass_ta):""; if(!ssid||!ssid[0]){ui_set_wifi_form_status(_UI,"Please scan and select a network",true);return;} ui_set_wifi_busy(_UI,true); esp_err_t err=wifi_handler_connect(ssid,pass); if(err!=ESP_OK){ui_set_wifi_busy(_UI,false);ui_set_wifi_form_status(_UI,"Failed to start connection",true);} }
 
 static void facility_prev_event_cb(lv_event_t *_event){UI*_UI=lv_event_get_user_data(_event);if(_UI&&_UI->facility_page>0){_UI->facility_page--;ui_build_facility_page(_UI);}}
-static void facility_next_event_cb(lv_event_t *_event){UI*_UI=lv_event_get_user_data(_event);if(_UI&&_UI->facility_page<1){_UI->facility_page++;ui_build_facility_page(_UI);}}
+static void facility_next_event_cb(lv_event_t *_event){UI*_UI=lv_event_get_user_data(_event);if(_UI&&_UI->facility_page<2){_UI->facility_page++;ui_build_facility_page(_UI);}}
 static void facility_save_event_cb(lv_event_t *_event){UI*_UI=lv_event_get_user_data(_event);if(_UI&&_UI->facility_status_label)lv_label_set_text(_UI->facility_status_label,"Saved facility");}
 
 void ui_set_wifi_form_status(UI *_UI, const char *_msg, bool _error) { if(!_UI||!_UI->wifi_status_label)return; lv_label_set_text(_UI->wifi_status_label,_msg?_msg:""); lv_obj_set_style_text_color(_UI->wifi_status_label,_error?lv_color_hex(C_RED):lv_color_white(),0); }
 void ui_set_wifi_busy(UI *_UI, bool _busy) { if(!_UI)return; _UI->wifi_connecting=_busy; if(_UI->wifi_connect_btn){ if(_busy) lv_obj_add_state(_UI->wifi_connect_btn,LV_STATE_DISABLED); else lv_obj_clear_state(_UI->wifi_connect_btn,LV_STATE_DISABLED);} }
 void ui_set_footer_text(UI *_UI, const char *_text) { if(!_UI||!_UI->footer_label||!_text)return; lv_label_set_text(_UI->footer_label,_text); }
 void ui_set_wifi_status(UI *_UI, bool _connected, const char *_ssid, const char *_ip) { if(!_UI)return; _UI->wifi_connected=_connected; snprintf(_UI->wifi_ssid,sizeof(_UI->wifi_ssid),"%s",_ssid?_ssid:""); snprintf(_UI->wifi_ip,sizeof(_UI->wifi_ip),"%s",_ip?_ip:""); if(_connected&&_ssid&&_ip)snprintf(_UI->wifi_status,sizeof(_UI->wifi_status),"WiFi OK | SSID: %s | IP: %s",_ssid,_ip); else snprintf(_UI->wifi_status,sizeof(_UI->wifi_status),"WiFi: Not connected"); ui_set_footer_text(_UI,_UI->wifi_status); ui_update_nav(_UI); if(_UI->current_screen==UI_SCREEN_WIFI){ui_close_wifi_password(_UI); ui_show_screen(_UI,UI_SCREEN_WIFI);} }
-void ui_set_wifi_network_list(UI *_UI, const char *_options) { if(!_UI||!_options)return; memset(_UI->wifi_networks,0,sizeof(_UI->wifi_networks)); _UI->wifi_network_count=0; _UI->wifi_network_page=0; const char*p=_options; while(*p&&_UI->wifi_network_count<20){char*dst=_UI->wifi_networks[_UI->wifi_network_count];size_t len=0;while(*p&&*p!='\n'){if(len<63)dst[len++]=*p;p++;}if(*p=='\n')p++;dst[len]='\0';if(len&&strcmp(dst,"Scan for networks...")&&strcmp(dst,"No networks found"))_UI->wifi_network_count++;} ui_update_wifi_rows(_UI); ui_set_wifi_form_status(_UI,_UI->wifi_network_count>0?"Scan complete":"No networks found",_UI->wifi_network_count==0); }
+void ui_set_wifi_network_list(UI *_UI, const char *_options) { if(!_UI||!_options)return; memset(_UI->wifi_networks,0,sizeof(_UI->wifi_networks)); _UI->wifi_network_count=0; _UI->wifi_network_page=0; const char*p=_options; while(*p&&_UI->wifi_network_count<20){char*dst=_UI->wifi_networks[_UI->wifi_network_count];size_t len=0;while(*p&&*p!='\n'){if(len<63)dst[len++]=*p;p++;}if(*p=='\n')p++;dst[len]='\0';if(len&&strcmp(dst,"Scan for networks...")&&strcmp(dst,"No networks found"))_UI->wifi_network_count++;} ui_update_wifi_rows(_UI);
+
+  if (_UI->wifi_network_count > 0) {
+    if (_UI->wifi_network_rows[0]) {
+      lv_obj_t *list = lv_obj_get_parent(_UI->wifi_network_rows[0]);
+      if (list) {
+        lv_obj_clear_flag(list, LV_OBJ_FLAG_HIDDEN);
+      }
+    }
+
+    if (_UI->wifi_prev_btn) {
+      lv_obj_clear_flag(_UI->wifi_prev_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (_UI->wifi_next_btn) {
+      lv_obj_clear_flag(_UI->wifi_next_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (_UI->wifi_page_label) {
+      lv_obj_clear_flag(_UI->wifi_page_label, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+
+  ui_set_wifi_form_status(_UI,_UI->wifi_network_count>0?"Scan complete":"No networks found",_UI->wifi_network_count==0); }
 void ui_tick(UI *_UI) { (void)_UI; }
