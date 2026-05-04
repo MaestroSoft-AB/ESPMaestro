@@ -12,19 +12,44 @@
 
 static const char *TAG = "WIFI";
 
-static wifi_handler_scan_cb s_scan_cb = NULL;
-static wifi_handler_status_cb s_status_cb = NULL;
-static esp_netif_t *s_sta_netif = NULL;
+static Wifi_Handler s_wifi = {
+    .state = WIFI_HANDLER_STATE_IDLE,
+};
+static const char *wifi_handler_state_name(wifi_handler_state state) {
+  switch (state) {
+  case WIFI_HANDLER_STATE_IDLE:
+    return "IDLE";
+  case WIFI_HANDLER_STATE_SCANNING:
+    return "SCANNING";
+  case WIFI_HANDLER_STATE_CONNECTING:
+    return "CONNECTING";
+  case WIFI_HANDLER_STATE_CONNECTED:
+    return "CONNECTED";
+  case WIFI_HANDLER_STATE_RECONNECT_WAIT:
+    return "RECONNECT_WAIT";
+  case WIFI_HANDLER_STATE_ERROR:
+    return "ERROR";
+  default:
+    return "UNKNOWN";
+  }
+}
 
-static bool s_connected = false;
-static bool s_user_disconnect = false;
-static char s_current_ssid[33] = {0};
+static void wifi_handler_set_state(wifi_handler_state new_state) {
+  if (s_wifi.state == new_state) {
+    return;
+  }
+
+  ESP_LOGI(TAG, "State: %s -> %s", wifi_handler_state_name(s_wifi.state),
+           wifi_handler_state_name(new_state));
+
+  s_wifi.state = new_state;
+}
 
 /**************************************************************/
 static void wifi_handler_emit_status(bool _connected, const char *_ssid,
                                      const char *_ip, const char *_msg) {
-  if (s_status_cb) {
-    s_status_cb(_connected, _ssid, _ip, _msg);
+  if (s_wifi.status_cb) {
+    s_wifi.status_cb(_connected, _ssid, _ip, _msg);
   }
 }
 
@@ -67,25 +92,50 @@ static void wifi_handler_event_manager(void *_arg, esp_event_base_t _event_base,
         out_count++;
       }
 
-      if (s_scan_cb) {
-        s_scan_cb(aps, out_count);
+      if (s_wifi.scan_cb) {
+        s_wifi.scan_cb(aps, out_count);
       }
+
+      wifi_handler_set_state(WIFI_HANDLER_STATE_IDLE);
+
+      if (!s_wifi.user_disconnect && s_wifi.current_ssid[0] != '\0') {
+        ESP_LOGI(TAG, "Scan done, reconnecting to saved SSID");
+        wifi_handler_set_state(WIFI_HANDLER_STATE_CONNECTING);
+        esp_wifi_connect();
+      }
+
       break;
     }
     case WIFI_EVENT_STA_DISCONNECTED: {
       wifi_event_sta_disconnected_t *disc =
           (wifi_event_sta_disconnected_t *)_event_data;
 
-      s_connected = false;
-
       ESP_LOGW(TAG, "Disconnected, reason: %d", disc ? disc->reason : -1);
 
-      wifi_handler_emit_status(false, s_current_ssid, NULL, "Disconnected");
+      wifi_handler_emit_status(false, s_wifi.current_ssid, NULL,
+                               "Disconnected");
 
-      if (!s_user_disconnect) {
-        ESP_LOGI(TAG, "Reconnecting...");
-        // esp_wifi_connect();
+      if (s_wifi.user_disconnect) {
+        wifi_handler_set_state(WIFI_HANDLER_STATE_IDLE);
+        break;
       }
+
+      if (s_wifi.state == WIFI_HANDLER_STATE_SCANNING) {
+        break;
+      }
+
+      if (s_wifi.retry_count < WIFI_MAX_RETRIES) {
+        s_wifi.retry_count++;
+
+        ESP_LOGI(TAG, "Reconnecting... attempt %d/%d", s_wifi.retry_count,
+                 WIFI_MAX_RETRIES);
+
+        wifi_handler_set_state(WIFI_HANDLER_STATE_CONNECTING);
+        esp_wifi_connect();
+      } else {
+        wifi_handler_set_state(WIFI_HANDLER_STATE_ERROR);
+      }
+
       break;
     }
     default:
@@ -98,10 +148,11 @@ static void wifi_handler_event_manager(void *_arg, esp_event_base_t _event_base,
       char ip_str[16] = {0};
 
       snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&event->ip_info.ip));
-      s_connected = true;
+      s_wifi.retry_count = 0;
+      wifi_handler_set_state(WIFI_HANDLER_STATE_CONNECTED);
 
       ESP_LOGI(TAG, "Got IP: %s", ip_str);
-      wifi_handler_emit_status(true, s_current_ssid, ip_str, "Connected");
+      wifi_handler_emit_status(true, s_wifi.current_ssid, ip_str, "Connected");
       break;
     }
     default:
@@ -112,8 +163,11 @@ static void wifi_handler_event_manager(void *_arg, esp_event_base_t _event_base,
 
 esp_err_t wifi_handler_init(wifi_handler_scan_cb _scan_cb,
                             wifi_handler_status_cb _status_cb) {
-  s_scan_cb = _scan_cb;
-  s_status_cb = _status_cb;
+  s_wifi.scan_cb = _scan_cb;
+  s_wifi.status_cb = _status_cb;
+  s_wifi.user_disconnect = false;
+  s_wifi.retry_count = 0;
+  wifi_handler_set_state(WIFI_HANDLER_STATE_IDLE);
 
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
@@ -127,13 +181,15 @@ esp_err_t wifi_handler_init(wifi_handler_scan_cb _scan_cb,
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-  s_sta_netif = esp_netif_create_default_wifi_sta();
-  if (!s_sta_netif) {
+  s_wifi.sta_netif = esp_netif_create_default_wifi_sta();
+  if (!s_wifi.sta_netif) {
     return ESP_FAIL;
   }
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+  ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
 
   ESP_ERROR_CHECK(esp_event_handler_register(
       WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_handler_event_manager, NULL));
@@ -143,12 +199,55 @@ esp_err_t wifi_handler_init(wifi_handler_scan_cb _scan_cb,
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_start());
 
+  wifi_config_t saved_cfg = {0};
+
+  esp_err_t cfg_err = esp_wifi_get_config(WIFI_IF_STA, &saved_cfg);
+  if (cfg_err == ESP_OK && saved_cfg.sta.ssid[0] != '\0') {
+    strncpy(s_wifi.current_ssid, (const char *)saved_cfg.sta.ssid,
+            sizeof(s_wifi.current_ssid) - 1);
+
+    s_wifi.user_disconnect = false;
+    ESP_LOGI(TAG, "Auto-connecting to saved SSID: %s", s_wifi.current_ssid);
+    esp_wifi_connect();
+  }
+
   return ESP_OK;
 }
 
 esp_err_t wifi_handler_scan(void) {
-  wifi_scan_config_t scan_cfg = {0}; // All channels
-  return esp_wifi_scan_start(&scan_cfg, false);
+  if (s_wifi.state == WIFI_HANDLER_STATE_SCANNING) {
+    return ESP_ERR_WIFI_STATE;
+  }
+
+  if (s_wifi.state == WIFI_HANDLER_STATE_CONNECTING ||
+      s_wifi.state == WIFI_HANDLER_STATE_CONNECTED ||
+      s_wifi.state == WIFI_HANDLER_STATE_RECONNECT_WAIT) {
+    esp_wifi_disconnect();
+  }
+
+  wifi_handler_set_state(WIFI_HANDLER_STATE_SCANNING);
+
+  wifi_scan_config_t scan_cfg = {
+      .ssid = NULL,
+      .bssid = NULL,
+      .channel = 0,
+      .show_hidden = false,
+  };
+
+  esp_err_t err = esp_wifi_scan_start(&scan_cfg, false);
+
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "esp_wifi_scan_start failed: %s", esp_err_to_name(err));
+
+    wifi_handler_set_state(WIFI_HANDLER_STATE_ERROR);
+
+    if (!s_wifi.user_disconnect && s_wifi.current_ssid[0] != '\0') {
+      wifi_handler_set_state(WIFI_HANDLER_STATE_CONNECTING);
+      esp_wifi_connect();
+    }
+  }
+
+  return err;
 }
 
 esp_err_t wifi_handler_connect(const char *_ssid, const char *_password) {
@@ -164,19 +263,22 @@ esp_err_t wifi_handler_connect(const char *_ssid, const char *_password) {
   }
 
   // Store for status & reconnect
-  strncpy(s_current_ssid, _ssid, sizeof(s_current_ssid) - 1);
-  s_user_disconnect = false;
+  strncpy(s_wifi.current_ssid, _ssid, sizeof(s_wifi.current_ssid) - 1);
+  s_wifi.user_disconnect = false;
 
   ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
-
+  wifi_handler_set_state(WIFI_HANDLER_STATE_CONNECTING);
   return esp_wifi_connect();
 }
 
 esp_err_t wifi_handler_disconnect(void) {
-  s_user_disconnect = true;
-  s_connected = false;
+  s_wifi.user_disconnect = true;
+  s_wifi.retry_count = 0;
+
+  wifi_handler_set_state(WIFI_HANDLER_STATE_IDLE);
 
   return esp_wifi_disconnect();
 }
-
-bool wifi_handler_is_connected(void) { return s_connected; }
+bool wifi_handler_is_connected(void) {
+  return s_wifi.state == WIFI_HANDLER_STATE_CONNECTED;
+}
