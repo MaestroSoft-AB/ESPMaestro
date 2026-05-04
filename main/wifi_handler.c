@@ -7,14 +7,34 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
-#include "lwip/ip4_addr.h"
 #include "nvs_flash.h"
 
+/**
+ * @file wifi_handler.c
+ * @brief ESP-IDF WiFi handler implementation.
+ *
+ * Implements a singleton WiFi state machine around ESP-IDF station mode.
+ * Credentials are stored by the ESP-IDF WiFi driver using NVS flash storage.
+ */
+
 static const char *TAG = "WIFI";
+
+/**
+ * @brief Singleton runtime state for the WiFi handler.
+ *
+ * ESP32-S3 has one WiFi station interface, so this module uses one internal
+ * instance instead of exposing multiple handler objects.
+ */
 
 static Wifi_Handler s_wifi = {
     .state = WIFI_HANDLER_STATE_IDLE,
 };
+
+/**
+ * @brief Convert a WiFi handler state to a readable string.
+ *
+ * Used for logging state transitions.
+ */
 static const char *wifi_handler_state_name(wifi_handler_state state) {
   switch (state) {
   case WIFI_HANDLER_STATE_IDLE:
@@ -34,6 +54,11 @@ static const char *wifi_handler_state_name(wifi_handler_state state) {
   }
 }
 
+/**
+ * @brief Update the internal state and log the transition.
+ *
+ * This should be the only place where s_wifi.state is modified directly.
+ */
 static void wifi_handler_set_state(wifi_handler_state new_state) {
   if (s_wifi.state == new_state) {
     return;
@@ -45,7 +70,11 @@ static void wifi_handler_set_state(wifi_handler_state new_state) {
   s_wifi.state = new_state;
 }
 
-/**************************************************************/
+/**
+ * @brief Emit a WiFi status update to the registered application callback.
+ *
+ * Safe to call even when no callback has been registered.
+ */
 static void wifi_handler_emit_status(bool _connected, const char *_ssid,
                                      const char *_ip, const char *_msg) {
   if (s_wifi.status_cb) {
@@ -53,6 +82,21 @@ static void wifi_handler_emit_status(bool _connected, const char *_ssid,
   }
 }
 
+/**
+ * @brief Handle ESP-IDF WiFi and IP events.
+ *
+ * This function drives the WiFi handler state machine:
+ * - WIFI_EVENT_SCAN_DONE collects scan results and resumes connection if
+ * needed.
+ * - WIFI_EVENT_STA_DISCONNECTED handles user disconnects and reconnect
+ * attempts.
+ * - IP_EVENT_STA_GOT_IP marks the handler as connected.
+ *
+ * @param _arg        Unused user argument.
+ * @param _event_base ESP-IDF event base.
+ * @param _event_id   ESP-IDF event identifier.
+ * @param _event_data Event-specific payload.
+ */
 static void wifi_handler_event_manager(void *_arg, esp_event_base_t _event_base,
                                        int32_t _event_id, void *_event_data) {
   (void)_arg;
@@ -189,6 +233,7 @@ esp_err_t wifi_handler_init(wifi_handler_scan_cb _scan_cb,
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+  // Store WiFi configuration in flash so credentials persist across reboots.
   ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
 
   ESP_ERROR_CHECK(esp_event_handler_register(
@@ -219,6 +264,8 @@ esp_err_t wifi_handler_scan(void) {
     return ESP_ERR_WIFI_STATE;
   }
 
+  // ESP-IDF does not allow scanning while the station is actively connecting.
+  // Disconnect first, then reconnect when WIFI_EVENT_SCAN_DONE is received.
   if (s_wifi.state == WIFI_HANDLER_STATE_CONNECTING ||
       s_wifi.state == WIFI_HANDLER_STATE_CONNECTED ||
       s_wifi.state == WIFI_HANDLER_STATE_RECONNECT_WAIT) {
