@@ -155,9 +155,9 @@ static void wifi_handler_event_manager(void *_arg, esp_event_base_t _event_base,
           (wifi_event_sta_disconnected_t *)_event_data;
 
       ESP_LOGW(TAG, "Disconnected, reason: %d", disc ? disc->reason : -1);
-
-      wifi_handler_emit_status(false, s_wifi.current_ssid, NULL,
-                               "Disconnected");
+      //
+      // wifi_handler_emit_status(false, s_wifi.current_ssid, NULL,
+      //                          "Disconnected");
 
       if (s_wifi.user_disconnect) {
         wifi_handler_set_state(WIFI_HANDLER_STATE_IDLE);
@@ -196,7 +196,8 @@ static void wifi_handler_event_manager(void *_arg, esp_event_base_t _event_base,
       wifi_handler_set_state(WIFI_HANDLER_STATE_CONNECTED);
 
       ESP_LOGI(TAG, "Got IP: %s", ip_str);
-      wifi_handler_emit_status(true, s_wifi.current_ssid, ip_str, "Connected");
+      // wifi_handler_emit_status(true, s_wifi.current_ssid, ip_str,
+      // "Connected");
       break;
     }
     default:
