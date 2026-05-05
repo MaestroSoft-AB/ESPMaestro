@@ -48,13 +48,13 @@
 #elif CONFIG_EXAMPLE_LVGL_PORT_BUF_INTERNAL
 #define LVGL_PORT_BUFFER_MALLOC_CAPS (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
 #endif
-#define LVGL_PORT_BUFFER_HEIGHT (100)
+#define LVGL_PORT_BUFFER_HEIGHT (600)
 
 /**
  * Avoid tering related configurations, can be adjusted by users.
  *
  */
-#define LVGL_PORT_AVOID_TEAR_ENABLE (1) // Set to 1 to enable
+#define LVGL_PORT_AVOID_TEAR_ENABLE (0) // Set to 1 to enable
 #if LVGL_PORT_AVOID_TEAR_ENABLE
 /**
  * Set the avoid tearing mode:

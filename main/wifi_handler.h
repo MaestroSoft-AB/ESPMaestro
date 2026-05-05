@@ -22,7 +22,7 @@
 /**
  * @brief Maximum number of reconnect attempts before entering ERROR state.
  */
-#define WIFI_MAX_RETRIES 5
+#define WIFI_MAX_RETRIES 2
 
 /**
  * @brief Internal state machine for WiFi handler.
