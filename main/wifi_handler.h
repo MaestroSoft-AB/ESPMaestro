@@ -3,9 +3,9 @@
 
 #include "esp_err.h"
 #include "esp_netif.h"
+#include "esp_wifi.h"
 #include <stdbool.h>
 #include <stdint.h>
-
 /**
  * @file wifi_handler.h
  * @brief WiFi manager for ESP32-S3.
@@ -33,7 +33,9 @@ typedef enum {
   WIFI_HANDLER_STATE_CONNECTING,     /**< Attempting to connect */
   WIFI_HANDLER_STATE_CONNECTED,      /**< Connected and IP acquired */
   WIFI_HANDLER_STATE_RECONNECT_WAIT, /**< Waiting before reconnect attempt */
-  WIFI_HANDLER_STATE_ERROR,          /**< Error state after failure */
+  WIFI_HANDLER_STATE_SWITCHING, /**< Switching after connecting to a new network
+                                 */
+  WIFI_HANDLER_STATE_ERROR,     /**< Error state after failure */
 } wifi_handler_state;
 
 /**
@@ -76,10 +78,11 @@ typedef struct {
   wifi_handler_scan_cb scan_cb;     /**< Scan result callback */
   wifi_handler_status_cb status_cb; /**< Status update callback */
   esp_netif_t *sta_netif;           /**< Station network interface */
-
+  bool user_connect;                /**< True if connect button was clicked*/
   bool user_disconnect;  /**< True if disconnect was user-triggered */
   char current_ssid[33]; /**< Currently configured SSID */
   int retry_count;       /**< Number of reconnect attempts */
+  wifi_config_t cfg;
 } Wifi_Handler;
 
 /**

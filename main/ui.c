@@ -1119,6 +1119,7 @@ static void connect_event_cb(lv_event_t *_event) {
   }
   ui_set_wifi_busy(_UI, true);
   esp_err_t err = wifi_handler_connect(ssid, pass);
+
   if (err != ESP_OK) {
     ui_set_wifi_busy(_UI, false);
     ui_set_wifi_form_status(_UI, "Failed to start connection", true);
