@@ -79,9 +79,10 @@ typedef struct {
   wifi_handler_status_cb status_cb; /**< Status update callback */
   esp_netif_t *sta_netif;           /**< Station network interface */
   bool user_connect;                /**< True if connect button was clicked*/
-  bool user_disconnect;  /**< True if disconnect was user-triggered */
-  char current_ssid[33]; /**< Currently configured SSID */
-  int retry_count;       /**< Number of reconnect attempts */
+  bool reconnect_after_scan; /**< True if connection to new network failed*/
+  bool user_disconnect;      /**< True if disconnect was user-triggered */
+  char current_ssid[33];     /**< Currently configured SSID */
+  int retry_count;           /**< Number of reconnect attempts */
   wifi_config_t cfg;
 } Wifi_Handler;
 

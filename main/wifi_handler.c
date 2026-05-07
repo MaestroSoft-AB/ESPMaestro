@@ -145,8 +145,12 @@ static void wifi_handler_event_manager(void *_arg, esp_event_base_t _event_base,
 
       wifi_handler_set_state(WIFI_HANDLER_STATE_IDLE);
 
-      if (!s_wifi.user_disconnect && s_wifi.current_ssid[0] != '\0') {
-        ESP_LOGI(TAG, "Scan done, reconnecting to saved SSID");
+      if (s_wifi.reconnect_after_scan && !s_wifi.user_disconnect &&
+          s_wifi.current_ssid[0] != '\0') {
+        s_wifi.reconnect_after_scan = false;
+
+        ESP_LOGI(TAG, "Scan done, reconnecting to saved SSID: %s",
+                 s_wifi.current_ssid);
         wifi_handler_set_state(WIFI_HANDLER_STATE_CONNECTING);
         esp_wifi_connect();
       }
@@ -277,10 +281,12 @@ esp_err_t wifi_handler_scan(void) {
     return ESP_ERR_WIFI_STATE;
   }
 
+  s_wifi.reconnect_after_scan = false;
   // ESP-IDF does not allow scanning while the station is actively connecting.
   // Disconnect first, then reconnect when WIFI_EVENT_SCAN_DONE is received.
   if (s_wifi.state == WIFI_HANDLER_STATE_CONNECTING ||
       s_wifi.state == WIFI_HANDLER_STATE_RECONNECT_WAIT) {
+    s_wifi.reconnect_after_scan = true;
     esp_wifi_disconnect();
   }
 
@@ -300,7 +306,9 @@ esp_err_t wifi_handler_scan(void) {
 
     wifi_handler_set_state(WIFI_HANDLER_STATE_ERROR);
 
-    if (!s_wifi.user_disconnect && s_wifi.current_ssid[0] != '\0') {
+    if (s_wifi.reconnect_after_scan && !s_wifi.user_disconnect &&
+        s_wifi.current_ssid[0] != '\0') {
+      s_wifi.reconnect_after_scan = false;
       wifi_handler_set_state(WIFI_HANDLER_STATE_CONNECTING);
       esp_wifi_connect();
     }
@@ -324,9 +332,17 @@ esp_err_t wifi_handler_connect(const char *_ssid, const char *_password) {
   strncpy(s_wifi.current_ssid, _ssid, sizeof(s_wifi.current_ssid) - 1);
   s_wifi.user_disconnect = false;
   s_wifi.retry_count = 0;
-  if (s_wifi.state == WIFI_HANDLER_STATE_CONNECTED) {
+
+  if (s_wifi.state == WIFI_HANDLER_STATE_CONNECTED ||
+      s_wifi.state == WIFI_HANDLER_STATE_CONNECTING ||
+      s_wifi.state == WIFI_HANDLER_STATE_IDLE) {
     wifi_handler_set_state(WIFI_HANDLER_STATE_SWITCHING);
-    esp_wifi_disconnect();
+
+    esp_err_t err = esp_wifi_disconnect();
+
+    if (err == ESP_ERR_WIFI_NOT_CONNECT) {
+      return wifi_handler_finish_connect();
+    }
     return ESP_OK;
   }
 
