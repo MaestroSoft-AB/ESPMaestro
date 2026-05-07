@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/projdefs.h"
 #include "freertos/task.h"
+#include "scheduler.h"
 #include "wifi_handler.h"
 #include <stdio.h>
 #include <string.h>
@@ -24,6 +25,15 @@ void app_main(void) {
     if (xTaskCreate(display_handler_work, "display_handler_work", 12288, NULL,
                     3, NULL) != pdPASS) {
       ESP_LOGE(TAG, "Failed to create display_handler_work task");
+    }
+  }
+
+  if (scheduler_init() != 0) {
+    ESP_LOGE(TAG, "Failed to init scheduler");
+  } else {
+    if (xTaskCreate(scheduler_task, "scheduler_task", 4096, NULL, 1, NULL) !=
+        pdPASS) {
+      ESP_LOGE(TAG, "Failed to create scheduler_task");
     }
   }
 

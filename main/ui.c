@@ -1079,7 +1079,6 @@ static void ui_open_wifi_password(UI *_UI, int _idx) {
   lv_keyboard_set_textarea(_UI->wifi_keyboard, _UI->wifi_pass_ta);
   lv_obj_t *cancel = ui_create_button(_UI->wifi_password_panel, "Cancel",
                                       lv_color_hex(0x374151));
-  lv_keyboard_set_popovers(_UI->wifi_keyboard, false);
   lv_obj_set_size(cancel, 120, 42);
   lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
   lv_obj_add_event_cb(cancel, wifi_cancel_event_cb, LV_EVENT_CLICKED, _UI);
@@ -1090,7 +1089,6 @@ static void ui_open_wifi_password(UI *_UI, int _idx) {
   lv_obj_add_event_cb(_UI->wifi_connect_btn, connect_event_cb, LV_EVENT_CLICKED,
                       _UI);
 }
-
 static void ui_close_wifi_password(UI *_UI) {
   if (_UI && _UI->wifi_password_overlay) {
     lv_obj_del(_UI->wifi_password_overlay);
@@ -1119,7 +1117,6 @@ static void connect_event_cb(lv_event_t *_event) {
   }
   ui_set_wifi_busy(_UI, true);
   esp_err_t err = wifi_handler_connect(ssid, pass);
-
   if (err != ESP_OK) {
     ui_set_wifi_busy(_UI, false);
     ui_set_wifi_form_status(_UI, "Failed to start connection", true);
