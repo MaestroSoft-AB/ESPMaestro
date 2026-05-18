@@ -112,9 +112,8 @@ static void ui_build_nav(UI *_UI) {
   _UI->nav = lv_obj_create(_UI->root);
   lv_obj_set_size(_UI->nav, LV_PCT(100), 86);
   lv_obj_set_style_bg_color(_UI->nav, lv_color_hex(C_PANEL), 0);
-  lv_obj_set_style_border_width(_UI->nav, 0, 0);
-  lv_obj_set_style_border_side(_UI->nav, LV_BORDER_SIDE_BOTTOM, 0);
   lv_obj_set_style_border_width(_UI->nav, 1, 0);
+  lv_obj_set_style_border_side(_UI->nav, LV_BORDER_SIDE_BOTTOM, 0);
   lv_obj_set_style_border_color(_UI->nav, lv_color_hex(C_BORDER), 0);
   lv_obj_set_style_radius(_UI->nav, 0, 0);
   lv_obj_set_style_pad_all(_UI->nav, 16, 0);
@@ -127,26 +126,84 @@ static void ui_build_nav(UI *_UI) {
   lv_obj_clear_flag(_UI->nav, LV_OBJ_FLAG_SCROLL_CHAIN);
   lv_obj_set_scrollbar_mode(_UI->nav, LV_SCROLLBAR_MODE_OFF);
 
+  lv_obj_t *left_group = lv_obj_create(_UI->nav);
+  lv_obj_set_size(left_group, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_opa(left_group, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(left_group, 0, 0);
+  lv_obj_set_style_pad_all(left_group, 0, 0);
+  lv_obj_set_style_pad_gap(left_group, 12, 0);
+  lv_obj_set_layout(left_group, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(left_group, LV_FLEX_FLOW_ROW);
+  lv_obj_clear_flag(left_group, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(left_group, LV_OBJ_FLAG_SCROLL_CHAIN);
+  lv_obj_set_scrollbar_mode(left_group, LV_SCROLLBAR_MODE_OFF);
+
   _UI->nav_home_btn =
-      ui_create_nav_button(_UI->nav, LV_SYMBOL_HOME, UI_SCREEN_HOME, _UI);
-  _UI->nav_forecast_btn =
-      ui_create_nav_button(_UI->nav, LV_SYMBOL_UPLOAD, UI_SCREEN_FORECAST, _UI);
-  _UI->nav_elpriser_btn =
-      ui_create_nav_button(_UI->nav, LV_SYMBOL_CHARGE, UI_SCREEN_ELPRISER, _UI);
+      ui_create_nav_button(left_group, LV_SYMBOL_HOME, UI_SCREEN_HOME, _UI);
+  _UI->nav_forecast_btn = ui_create_nav_button(left_group, LV_SYMBOL_UPLOAD,
+                                               UI_SCREEN_FORECAST, _UI);
+  _UI->nav_elpriser_btn = ui_create_nav_button(left_group, LV_SYMBOL_CHARGE,
+                                               UI_SCREEN_ELPRISER, _UI);
 
-  lv_obj_t *spacer = lv_obj_create(_UI->nav);
-  lv_obj_set_flex_grow(spacer, 1);
-  lv_obj_set_height(spacer, 1);
-  lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(spacer, 0, 0);
-  lv_obj_clear_flag(spacer, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_clear_flag(spacer, LV_OBJ_FLAG_SCROLL_CHAIN);
-  lv_obj_set_scrollbar_mode(spacer, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_t *left_spacer = lv_obj_create(_UI->nav);
+  lv_obj_set_flex_grow(left_spacer, 1);
+  lv_obj_set_height(left_spacer, 1);
+  lv_obj_set_style_bg_opa(left_spacer, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(left_spacer, 0, 0);
+  lv_obj_clear_flag(left_spacer, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(left_spacer, LV_OBJ_FLAG_SCROLL_CHAIN);
+  lv_obj_set_scrollbar_mode(left_spacer, LV_SCROLLBAR_MODE_OFF);
 
-  _UI->nav_settings_btn = ui_create_nav_button(_UI->nav, LV_SYMBOL_SETTINGS,
+  lv_obj_t *time_box = lv_obj_create(_UI->nav);
+  lv_obj_set_size(time_box, 180, 54);
+  lv_obj_set_style_bg_opa(time_box, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(time_box, 0, 0);
+  lv_obj_set_style_pad_all(time_box, 0, 0);
+  lv_obj_set_style_pad_gap(time_box, 2, 0);
+  lv_obj_set_layout(time_box, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(time_box, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(time_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(time_box, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(time_box, LV_OBJ_FLAG_SCROLL_CHAIN);
+  lv_obj_set_scrollbar_mode(time_box, LV_SCROLLBAR_MODE_OFF);
+
+  _UI->nav_clock_label = lv_label_create(time_box);
+  lv_obj_set_style_text_color(_UI->nav_clock_label, lv_color_white(), 0);
+  lv_obj_set_style_text_font(_UI->nav_clock_label, &notosans_14, 0);
+  lv_label_set_text(_UI->nav_clock_label, "--:--:--");
+
+  _UI->nav_date_label = lv_label_create(time_box);
+  lv_obj_set_style_text_color(_UI->nav_date_label, lv_color_hex(C_MUTED), 0);
+  lv_obj_set_style_text_font(_UI->nav_date_label, &notosans_14, 0);
+  lv_label_set_text(_UI->nav_date_label, "----------");
+
+  lv_obj_t *right_spacer = lv_obj_create(_UI->nav);
+  lv_obj_set_flex_grow(right_spacer, 1);
+  lv_obj_set_height(right_spacer, 1);
+  lv_obj_set_style_bg_opa(right_spacer, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(right_spacer, 0, 0);
+  lv_obj_clear_flag(right_spacer, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(right_spacer, LV_OBJ_FLAG_SCROLL_CHAIN);
+  lv_obj_set_scrollbar_mode(right_spacer, LV_SCROLLBAR_MODE_OFF);
+
+  lv_obj_t *right_group = lv_obj_create(_UI->nav);
+  lv_obj_set_size(right_group, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_opa(right_group, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(right_group, 0, 0);
+  lv_obj_set_style_pad_all(right_group, 0, 0);
+  lv_obj_set_style_pad_gap(right_group, 12, 0);
+  lv_obj_set_layout(right_group, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(right_group, LV_FLEX_FLOW_ROW);
+  lv_obj_clear_flag(right_group, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(right_group, LV_OBJ_FLAG_SCROLL_CHAIN);
+  lv_obj_set_scrollbar_mode(right_group, LV_SCROLLBAR_MODE_OFF);
+
+  _UI->nav_settings_btn = ui_create_nav_button(right_group, LV_SYMBOL_SETTINGS,
                                                UI_SCREEN_SETTINGS, _UI);
   _UI->nav_wifi_btn =
-      ui_create_nav_button(_UI->nav, LV_SYMBOL_WIFI, UI_SCREEN_WIFI, _UI);
+      ui_create_nav_button(right_group, LV_SYMBOL_WIFI, UI_SCREEN_WIFI, _UI);
+
   _UI->wifi_indicator = lv_obj_create(_UI->nav_wifi_btn);
   lv_obj_set_size(_UI->wifi_indicator, 9, 9);
   lv_obj_align(_UI->wifi_indicator, LV_ALIGN_TOP_RIGHT, -5, 5);
@@ -1233,4 +1290,24 @@ void ui_set_wifi_network_list(UI *_UI, const char *_options) {
       _UI, _UI->wifi_network_count > 0 ? "Scan complete" : "No networks found",
       _UI->wifi_network_count == 0);
 }
+
+void ui_set_time(UI *_UI, uint8_t h, uint8_t m, uint8_t s) {
+  if (!_UI)
+    return;
+  char clock[9];
+  clock[0] = '0' + (h / 10);
+  clock[1] = '0' + (h % 10);
+  clock[2] = ':';
+  clock[3] = '0' + (m / 10);
+  clock[4] = '0' + (m % 10);
+  clock[5] = ':';
+  clock[6] = '0' + (s / 10);
+  clock[7] = '0' + (s % 10);
+  clock[8] = '\0';
+
+  if (_UI->nav_clock_label) {
+    lv_label_set_text(_UI->nav_clock_label, clock);
+  }
+}
+
 void ui_tick(UI *_UI) { (void)_UI; }

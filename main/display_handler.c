@@ -39,6 +39,10 @@ static char mem_info[91] = {0};
 static DH_wifi_status g_wifi_status = {0};
 static SemaphoreHandle_t g_wifi_status_mutex = NULL;
 
+/*---------------------------Time---------------------------------------*/
+static DH_time_status g_time_status = {0};
+static SemaphoreHandle_t g_time_status_mutex = NULL;
+
 /* -------------------------------PERF OVERLAY------------------------- */
 static lv_obj_t *g_perf_label = NULL;
 static uint32_t g_perf_frame_count = 0;
@@ -158,6 +162,21 @@ void on_wifi_status(bool _connected, const char *_ssid, const char *_ip,
 }
 
 /******************************************************************/
+
+void display_handler_update_time(uint8_t h, uint8_t m, uint8_t s) {
+  if (!g_time_status_mutex)
+    return;
+
+  if (xSemaphoreTake(g_time_status_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    g_time_status.h = h;
+    g_time_status.m = m;
+    g_time_status.s = s;
+    g_time_status.time_ready = true;
+    xSemaphoreGive(g_time_status_mutex);
+  }
+}
+
+/******************************************************************/
 static char *get_iso_time_string(void) {
   time_t epoch = time(NULL);
   struct tm *tm = gmtime(&epoch);
@@ -223,6 +242,12 @@ int display_handler_init(DH *_DH) {
     return -1;
   }
 
+  g_time_status_mutex = xSemaphoreCreateMutex();
+  if (!g_time_status_mutex) {
+    ESP_LOGE(TAG, "Failed to create time status mutex");
+    return -1;
+  }
+
   return 0;
 }
 
@@ -244,6 +269,8 @@ void display_handler_work(void *_null_for_now) {
 
   while (1) {
     bool need_ui_update = false;
+    bool need_time_update = false;
+    uint8_t h = 0, m = 0, s = 0;
 
     if (g_wifi_status_mutex &&
         xSemaphoreTake(g_wifi_status_mutex, 0) == pdTRUE) {
@@ -283,6 +310,24 @@ void display_handler_work(void *_null_for_now) {
 
           xSemaphoreGive(g_wifi_status_mutex);
         }
+      }
+
+      if (g_time_status_mutex &&
+          xSemaphoreTake(g_time_status_mutex, 0) == pdTRUE) {
+
+        if (g_time_status.time_ready) {
+          h = g_time_status.h;
+          m = g_time_status.m;
+          s = g_time_status.s;
+          g_time_status.time_ready = false;
+          need_time_update = true;
+        }
+
+        xSemaphoreGive(g_time_status_mutex);
+      }
+
+      if (need_time_update) {
+        ui_set_time(&g_ui, h, m, s);
       }
 
       /* Perf overlay tick */

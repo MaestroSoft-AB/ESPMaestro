@@ -24,6 +24,10 @@
  */
 #define WIFI_MAX_RETRIES 2
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief Internal state machine for WiFi handler.
  */
@@ -136,5 +140,7 @@ esp_err_t wifi_handler_disconnect(void);
  * @return true if connected, false otherwise
  */
 bool wifi_handler_is_connected(void);
-
+#ifdef __cplusplus
+}
+#endif
 #endif

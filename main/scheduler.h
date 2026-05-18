@@ -15,6 +15,10 @@
 #define MIN_LOOP_MS                                                            \
   10 // Defines how many ms a scheduler task-loop needs to take at a minimum
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
   void *context;
   /*replace callback with work function from other module?*/
@@ -38,5 +42,9 @@ void scheduler_destroy_task(Scheduler_Task *_Task);
 void scheduler_work(uint64_t _montime);
 int scheduler_get_task_count();
 void scheduler_dispose();
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -91,6 +91,9 @@ typedef struct {
   lv_obj_t *facility_save_btn;
   int facility_page;
 
+  lv_obj_t *nav_clock_label;
+  lv_obj_t *nav_date_label;
+
   UI_Screen current_screen;
   bool wifi_connecting;
   bool wifi_connected;
@@ -107,6 +110,7 @@ void ui_show_screen(UI *_UI, UI_Screen _screen);
 void ui_set_wifi_form_status(UI *_UI, const char *_msg, bool _error);
 void ui_set_wifi_busy(UI *_UI, bool _busy);
 void ui_tick(UI *_UI);
+void ui_set_time(UI *_UI, uint8_t h, uint8_t m, uint8_t s);
 void ui_set_footer_text(UI *_UI, const char *_text);
 void ui_set_wifi_status(UI *_UI, bool _connected, const char *_ssid,
                         const char *_ip);

@@ -6,6 +6,7 @@
 #include "freertos/projdefs.h"
 #include "freertos/task.h"
 #include "scheduler.h"
+#include "ui_status.hpp"
 #include "wifi_handler.h"
 #include <stdio.h>
 #include <string.h>
@@ -14,7 +15,7 @@
 
 static const char *TAG = "main";
 
-void app_main(void) {
+extern "C" void app_main(void) {
 
   /* Initialize display first */
   if (display_handler_init(NULL) != 0) {
@@ -41,6 +42,8 @@ void app_main(void) {
     ESP_LOGE(TAG, "Failed to init wifi manager");
     return;
   }
+
+  static UiStatus uistatus;
 }
 
 /*
