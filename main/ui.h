@@ -115,5 +115,5 @@ void ui_set_footer_text(UI *_UI, const char *_text);
 void ui_set_wifi_status(UI *_UI, bool _connected, const char *_ssid,
                         const char *_ip);
 void ui_set_wifi_network_list(UI *_UI, const char *_options);
-
+void ui_set_date(UI *_UI, uint16_t year, uint8_t month, uint8_t day);
 #endif

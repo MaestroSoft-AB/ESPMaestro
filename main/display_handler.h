@@ -36,6 +36,12 @@ typedef struct {
   uint8_t s;
 } DH_time_status;
 
+typedef struct {
+  bool date_ready;
+  uint16_t year;
+  uint8_t month;
+  uint8_t day;
+} DH_date_status;
 /*-----------Callbacks-----*/
 void on_wifi_status(bool _connected, const char *_ssid, const char *_ip,
                     const char *_message);
@@ -49,7 +55,7 @@ void display_handler_wifi_status(bool connected, const char *ssid,
                                  const char *ip);
 
 void display_handler_update_time(uint8_t h, uint8_t m, uint8_t s);
-
+void display_handler_update_date(uint16_t year, uint8_t month, uint8_t day);
 // void dh_dispose(DH* _DH);
 
 /* ========================================================= */

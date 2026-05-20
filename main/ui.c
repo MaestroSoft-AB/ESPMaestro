@@ -1310,4 +1310,32 @@ void ui_set_time(UI *_UI, uint8_t h, uint8_t m, uint8_t s) {
   }
 }
 
+void ui_set_date(UI *_UI, uint16_t year, uint8_t month, uint8_t day) {
+  if (!_UI)
+    return;
+
+  char date[11]; // "2026-05-23" + '\0'
+
+  date[0] = '0' + ((year / 1000) % 10);
+  date[1] = '0' + ((year / 100) % 10);
+  date[2] = '0' + ((year / 10) % 10);
+  date[3] = '0' + (year % 10);
+
+  date[4] = '-';
+
+  date[5] = '0' + (month / 10);
+  date[6] = '0' + (month % 10);
+
+  date[7] = '-';
+
+  date[8] = '0' + (day / 10);
+  date[9] = '0' + (day % 10);
+
+  date[10] = '\0';
+
+  if (_UI->nav_date_label) {
+    lv_label_set_text(_UI->nav_date_label, date);
+  }
+}
+
 void ui_tick(UI *_UI) { (void)_UI; }

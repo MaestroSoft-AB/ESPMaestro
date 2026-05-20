@@ -39,9 +39,12 @@ static char mem_info[91] = {0};
 static DH_wifi_status g_wifi_status = {0};
 static SemaphoreHandle_t g_wifi_status_mutex = NULL;
 
-/*---------------------------Time---------------------------------------*/
+/*---------------------------Time & Date--------------------------------------*/
 static DH_time_status g_time_status = {0};
 static SemaphoreHandle_t g_time_status_mutex = NULL;
+
+static DH_date_status g_date_status = {0};
+static SemaphoreHandle_t g_date_status_mutex = NULL;
 
 /* -------------------------------PERF OVERLAY------------------------- */
 static lv_obj_t *g_perf_label = NULL;
@@ -176,6 +179,19 @@ void display_handler_update_time(uint8_t h, uint8_t m, uint8_t s) {
   }
 }
 
+void display_handler_update_date(uint16_t year, uint8_t month, uint8_t day) {
+  if (!g_date_status_mutex)
+    return;
+
+  if (xSemaphoreTake(g_date_status_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    g_date_status.year = year;
+    g_date_status.month = month;
+    g_date_status.day = day;
+    g_date_status.date_ready = true;
+    xSemaphoreGive(g_date_status_mutex);
+  }
+}
+
 /******************************************************************/
 static char *get_iso_time_string(void) {
   time_t epoch = time(NULL);
@@ -248,6 +264,12 @@ int display_handler_init(DH *_DH) {
     return -1;
   }
 
+  g_date_status_mutex = xSemaphoreCreateMutex();
+  if (!g_time_status_mutex) {
+    ESP_LOGE(TAG, "Failed to create date status mutex");
+    return -1;
+  }
+
   return 0;
 }
 
@@ -270,7 +292,7 @@ void display_handler_work(void *_null_for_now) {
   while (1) {
     bool need_ui_update = false;
     bool need_time_update = false;
-    uint8_t h = 0, m = 0, s = 0;
+    bool need_date_update = false;
 
     if (g_wifi_status_mutex &&
         xSemaphoreTake(g_wifi_status_mutex, 0) == pdTRUE) {
@@ -316,9 +338,6 @@ void display_handler_work(void *_null_for_now) {
           xSemaphoreTake(g_time_status_mutex, 0) == pdTRUE) {
 
         if (g_time_status.time_ready) {
-          h = g_time_status.h;
-          m = g_time_status.m;
-          s = g_time_status.s;
           g_time_status.time_ready = false;
           need_time_update = true;
         }
@@ -327,7 +346,21 @@ void display_handler_work(void *_null_for_now) {
       }
 
       if (need_time_update) {
-        ui_set_time(&g_ui, h, m, s);
+        ui_set_time(&g_ui, g_time_status.h, g_time_status.m, g_time_status.s);
+      }
+
+      if (g_date_status_mutex &&
+          xSemaphoreTake(g_date_status_mutex, 0) == pdTRUE) {
+        if (g_date_status.date_ready) {
+          g_date_status.date_ready = false;
+          need_date_update = true;
+        }
+        xSemaphoreGive(g_date_status_mutex);
+      }
+
+      if (need_date_update) {
+        ui_set_date(&g_ui, g_date_status.year, g_date_status.month,
+                    g_date_status.day);
       }
 
       /* Perf overlay tick */

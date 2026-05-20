@@ -7,9 +7,16 @@
 static const char *TAG = "ui status";
 static void ui_status_taskwork(void *_context, uint64_t _montime);
 
+/***********************Internal Helpers******************/
+static void init_timezone_sweden() {
+  setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
+  tzset();
+}
+
 /***********************Taskwork**************************/
 
 UIStatusState ui_status_init() {
+  init_timezone_sweden();
   NtpClock::init();
   return UI_STATUS_WAIT_NTP;
 }
@@ -72,8 +79,8 @@ void UiStatus::sync_time_from_ntp(uint32_t epoch, uint64_t now_ms) {
 
 UiStatus::UiStatus()
     : state_(UI_STATUS_INIT), base_epoch_(0), base_ms_(0), next_clock_ms_(0),
-      task_(nullptr), time_valid_(true), initialized_(true), hour(0), minute(0),
-      second(0) {
+      task_(nullptr), time_valid_(false), initialized_(true), hour(0),
+      minute(0), second(0) {
   task_ = scheduler_create_task(this, ui_status_taskwork);
   if (task_ == nullptr) {
     initialized_ = false;
@@ -85,17 +92,29 @@ void UiStatus::update_clock(uint64_t now_ms) {
     return;
 
   uint32_t elapsed = (now_ms - base_ms_) / 1000;
-  uint32_t current = base_epoch_ + elapsed;
+  time_t current = (time_t)(base_epoch_ + elapsed);
 
-  uint32_t day = current % 86400;
+  struct tm local = {};
+  localtime_r(&current, &local);
 
-  uint8_t h = day / 3600;
-  uint8_t m = (day / 60) % 60;
-  uint8_t s = day % 60;
+  int new_year = local.tm_year + 1900;
+  int new_month = local.tm_mon + 1;
+  int new_day = local.tm_mday;
 
-  set_hour(h);
-  set_minute(m);
-  set_second(s);
+  bool new_date = (new_year != this->year) || (new_month != this->month) ||
+                  (new_day != this->day);
+
+  set_hour(local.tm_hour);
+  set_minute(local.tm_min);
+  set_second(local.tm_sec);
+
+  this->year = new_year;
+  this->month = new_month;
+  this->day = new_day;
+
+  if (new_date) {
+    display_handler_update_date(this->year, this->month, this->day);
+  }
 
   next_clock_ms_ = now_ms + 1000;
 }

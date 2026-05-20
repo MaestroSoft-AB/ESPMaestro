@@ -25,6 +25,10 @@ private:
   uint8_t second;
 
 public:
+  uint16_t year;
+  uint8_t month;
+  uint8_t day;
+
   UiStatus();
 
   // Prohibit copy
