@@ -33,7 +33,7 @@ typedef enum {
    * I/O or System Errors        (-20 to -29)
    * ------------------------------------------------------------ */
   ERR_IO = -20,          /**< General read/write or system-level I/O error */
-  ERR_TIMEOUT = -21,     /**< Operation timed out */
+  ERR_IO_TIMEOUT = -21,     /**< Operation timed out. Formerly "ERR_TIMEOUT" */
   ERR_WOULD_BLOCK = -22, /**< Non-blocking operation would block */
   ERR_CONNECTION_LOST = -23, /**< Connection dropped unexpectedly */
   ERR_CONNECTION_FAIL = -24, /**< Failed to establish a connection */
