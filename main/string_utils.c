@@ -22,8 +22,9 @@ char* stringcat(const char* _a, const char* _b)
   return ab;
 }
 
-#ifndef strdup
+// #ifndef strdup
 /* C89 approved strdup */
+/*
 char* strdup(const char* _str)
 {
   if (!_str)
@@ -38,7 +39,8 @@ char* strdup(const char* _str)
 
   return copy;
 }
-#endif /* strdup */
+*/  
+// #endif /* strdup */
 
 int parse_string_to_double(const char* _str, double* _double)
 {
