@@ -1,6 +1,7 @@
 #ifndef __UI_H_
 #define __UI_H_
 
+#include "facility_config.h"
 #include "lvgl.h"
 #include <stdbool.h>
 
@@ -64,7 +65,7 @@ typedef struct {
   lv_obj_t *wifi_status_label;
   lv_obj_t *wifi_connect_btn;
   lv_obj_t *wifi_scan_btn;
-  lv_obj_t *wifi_keyboard;
+  lv_obj_t *keyboard;
   lv_obj_t *wifi_ssid_label;
   lv_obj_t *wifi_network_rows[5];
   lv_obj_t *wifi_network_labels[5];
@@ -78,15 +79,12 @@ typedef struct {
 
   lv_obj_t *facility_form;
   lv_obj_t *facility_name_ta;
-  lv_obj_t *facility_country_ta;
   lv_obj_t *facility_address_ta;
+  lv_obj_t *facility_lat_ta;
+  lv_obj_t *facility_lon_ta;
+  lv_obj_t *facility_energy_zone_ta;
   lv_obj_t *facility_city_ta;
   lv_obj_t *facility_zip_ta;
-  lv_obj_t *facility_state_ta;
-  lv_obj_t *facility_timezone_ta;
-  lv_obj_t *facility_type_ta;
-  lv_obj_t *facility_capacity_ta;
-  lv_obj_t *facility_operator_ta;
   lv_obj_t *facility_status_label;
   lv_obj_t *facility_save_btn;
   int facility_page;
@@ -103,6 +101,7 @@ typedef struct {
   char wifi_networks[20][64];
   int wifi_network_count;
   int wifi_network_selected;
+  Facility_Config facility_cfg;
 } UI;
 
 void ui_init(UI *_UI);

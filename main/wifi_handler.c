@@ -7,7 +7,6 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
-#include "nvs_flash.h"
 
 /**
  * @file wifi_handler.c
@@ -225,15 +224,6 @@ esp_err_t wifi_handler_init(wifi_handler_scan_cb _scan_cb,
   s_wifi.user_disconnect = false;
   s_wifi.retry_count = 0;
   wifi_handler_set_state(WIFI_HANDLER_STATE_IDLE);
-
-  esp_err_t err = nvs_flash_init();
-  if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
-      err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    ESP_ERROR_CHECK(nvs_flash_erase());
-    err = nvs_flash_init();
-  }
-
-  ESP_ERROR_CHECK(err);
 
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());

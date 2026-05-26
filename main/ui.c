@@ -1,8 +1,8 @@
 #include "ui.h"
 #include "esp_log.h"
 #include "wifi_handler.h"
-
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 extern const lv_font_t notosans_14;
@@ -36,7 +36,8 @@ static void ui_build_screen_settings(UI *_UI);
 static void ui_build_screen_wifi(UI *_UI);
 static void ui_build_screen_facility(UI *_UI);
 static void ui_build_screen_device_info(UI *_UI);
-
+static void keyboard_event_cb(lv_event_t *e);
+static void ui_hide_keyboard(UI *_UI);
 static lv_obj_t *ui_create_panel(lv_obj_t *_parent);
 static lv_obj_t *ui_create_label(lv_obj_t *_parent, const char *_text,
                                  lv_color_t _color);
@@ -44,9 +45,10 @@ static lv_obj_t *ui_create_button(lv_obj_t *_parent, const char *_text,
                                   lv_color_t _bg);
 static lv_obj_t *ui_create_nav_button(lv_obj_t *_parent, const char *_text,
                                       UI_Screen _screen, UI *_UI);
-static lv_obj_t *ui_create_textarea(lv_obj_t *_parent,
-                                    const char *_placeholder);
-static lv_obj_t *ui_create_form_field(lv_obj_t *_parent, const char *_label,
+static lv_obj_t *ui_create_textarea(UI *_UI, lv_obj_t *parent,
+                                    const char *placeholder);
+static lv_obj_t *ui_create_form_field(UI *_UI, lv_obj_t *_parent,
+                                      const char *_label,
                                       const char *_placeholder);
 static void ui_create_metric_card(lv_obj_t *_parent, const char *_title,
                                   const char *_value, const char *_sub,
@@ -69,13 +71,74 @@ static void wifi_scan_btn_event_cb(lv_event_t *_event);
 static void wifi_network_row_event_cb(lv_event_t *_event);
 static void wifi_prev_page_event_cb(lv_event_t *_event);
 static void wifi_next_page_event_cb(lv_event_t *_event);
-static void wifi_ta_event_cb(lv_event_t *_event);
 static void connect_event_cb(lv_event_t *_event);
 static void wifi_cancel_event_cb(lv_event_t *_event);
 static void facility_prev_event_cb(lv_event_t *_event);
 static void facility_next_event_cb(lv_event_t *_event);
 static void facility_save_event_cb(lv_event_t *_event);
 
+/****************** HELP ME *************************/
+
+static void facility_read_current_page(UI *_UI) {
+  if (!_UI)
+    return;
+
+  if (_UI->facility_page == 0) {
+    if (_UI->facility_name_ta) {
+      snprintf(_UI->facility_cfg.facility_name,
+               sizeof(_UI->facility_cfg.facility_name), "%s",
+               lv_textarea_get_text(_UI->facility_name_ta));
+    }
+
+    if (_UI->facility_address_ta) {
+      snprintf(_UI->facility_cfg.address, sizeof(_UI->facility_cfg.address),
+               "%s", lv_textarea_get_text(_UI->facility_address_ta));
+    }
+
+  } else if (_UI->facility_page == 1) {
+    if (_UI->facility_city_ta) {
+      snprintf(_UI->facility_cfg.city, sizeof(_UI->facility_cfg.city), "%s",
+               lv_textarea_get_text(_UI->facility_city_ta));
+    }
+
+    if (_UI->facility_zip_ta) {
+      _UI->facility_cfg.zip =
+          (uint8_t)atoi(lv_textarea_get_text(_UI->facility_zip_ta));
+    }
+
+  } else {
+    if (_UI->facility_lat_ta) {
+      snprintf(_UI->facility_cfg.lat, sizeof(_UI->facility_cfg.lat), "%s",
+               lv_textarea_get_text(_UI->facility_lat_ta));
+    }
+
+    if (_UI->facility_lon_ta) {
+      snprintf(_UI->facility_cfg.lon, sizeof(_UI->facility_cfg.lon), "%s",
+               lv_textarea_get_text(_UI->facility_lon_ta));
+    }
+
+    if (_UI->facility_energy_zone_ta) {
+      _UI->facility_cfg.energy_zone =
+          (uint8_t)atoi(lv_textarea_get_text(_UI->facility_energy_zone_ta));
+    }
+  }
+}
+static void textarea_event_cb(lv_event_t *e) {
+  UI *ui = lv_event_get_user_data(e);
+  lv_obj_t *ta = lv_event_get_target(e);
+  lv_event_code_t code = lv_event_get_code(e);
+
+  if (!ui || !ui->keyboard)
+    return;
+
+  if (code == LV_EVENT_FOCUSED) {
+    lv_keyboard_set_textarea(ui->keyboard, ta);
+    lv_obj_clear_flag(ui->keyboard, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(ui->keyboard);
+  }
+}
+
+/*****************************************************/
 void ui_init(UI *_UI) {
   if (!_UI)
     return;
@@ -90,6 +153,12 @@ void ui_init(UI *_UI) {
   ui_build_nav(_UI);
   ui_build_content(_UI);
   ui_build_footer(_UI);
+  _UI->keyboard = lv_keyboard_create(lv_scr_act());
+  lv_obj_set_size(_UI->keyboard, LV_PCT(100), 220);
+  lv_obj_align(_UI->keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_add_flag(_UI->keyboard, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_event_cb(_UI->keyboard, keyboard_event_cb, LV_EVENT_READY, _UI);
+  lv_obj_add_event_cb(_UI->keyboard, keyboard_event_cb, LV_EVENT_CANCEL, _UI);
   ui_show_screen(_UI, UI_SCREEN_HOME);
 }
 
@@ -291,7 +360,6 @@ static void ui_destroy_active_screen(UI *_UI) {
   _UI->wifi_status_label = NULL;
   _UI->wifi_connect_btn = NULL;
   _UI->wifi_scan_btn = NULL;
-  _UI->wifi_keyboard = NULL;
   _UI->wifi_ssid_label = NULL;
   _UI->wifi_prev_btn = NULL;
   _UI->wifi_next_btn = NULL;
@@ -304,17 +372,14 @@ static void ui_destroy_active_screen(UI *_UI) {
   }
   _UI->facility_form = NULL;
   _UI->facility_name_ta = NULL;
-  _UI->facility_country_ta = NULL;
   _UI->facility_address_ta = NULL;
   _UI->facility_city_ta = NULL;
   _UI->facility_zip_ta = NULL;
-  _UI->facility_state_ta = NULL;
-  _UI->facility_timezone_ta = NULL;
-  _UI->facility_type_ta = NULL;
-  _UI->facility_capacity_ta = NULL;
-  _UI->facility_operator_ta = NULL;
   _UI->facility_status_label = NULL;
   _UI->facility_save_btn = NULL;
+  _UI->facility_lat_ta = NULL;
+  _UI->facility_lon_ta = NULL;
+  _UI->facility_energy_zone_ta = NULL;
 }
 
 static void ui_build_active_screen(UI *_UI, UI_Screen _screen) {
@@ -349,6 +414,12 @@ static void ui_build_active_screen(UI *_UI, UI_Screen _screen) {
 void ui_show_screen(UI *_UI, UI_Screen _screen) {
   if (!_UI)
     return;
+
+  if (_UI->keyboard) {
+    lv_keyboard_set_textarea(_UI->keyboard, NULL);
+    lv_obj_add_flag(_UI->keyboard, LV_OBJ_FLAG_HIDDEN);
+  }
+
   _UI->current_screen = _screen;
   ui_destroy_active_screen(_UI);
   ui_build_active_screen(_UI, _screen);
@@ -415,26 +486,24 @@ static lv_obj_t *ui_create_button(lv_obj_t *_parent, const char *_text,
   return btn;
 }
 
-static lv_obj_t *ui_create_textarea(lv_obj_t *_parent,
-                                    const char *_placeholder) {
-  lv_obj_t *ta = lv_textarea_create(_parent);
+static lv_obj_t *ui_create_textarea(UI *_UI, lv_obj_t *parent,
+                                    const char *placeholder) {
+  lv_obj_t *ta = lv_textarea_create(parent);
+
   lv_obj_set_width(ta, LV_PCT(100));
   lv_obj_set_height(ta, 46);
-  lv_textarea_set_placeholder_text(ta, _placeholder);
-  lv_obj_set_style_bg_color(ta, lv_color_hex(C_CARD), 0);
-  lv_obj_set_style_text_color(ta, lv_color_white(), 0);
-  lv_obj_set_style_border_color(ta, lv_color_hex(C_BORDER), 0);
-  lv_obj_set_style_border_width(ta, 1, 0);
-  lv_obj_set_style_radius(ta, 8, 0);
-  lv_obj_set_style_pad_left(ta, 12, 0);
-  lv_obj_set_style_pad_right(ta, 12, 0);
+  lv_textarea_set_placeholder_text(ta, placeholder);
+
+  lv_obj_add_event_cb(ta, textarea_event_cb, LV_EVENT_FOCUSED, _UI);
+
   return ta;
 }
 
-static lv_obj_t *ui_create_form_field(lv_obj_t *_parent, const char *_label,
+static lv_obj_t *ui_create_form_field(UI *_UI, lv_obj_t *_parent,
+                                      const char *_label,
                                       const char *_placeholder) {
   ui_create_label(_parent, _label, lv_color_hex(0xD1D5DB));
-  return ui_create_textarea(_parent, _placeholder);
+  return ui_create_textarea(_UI, _parent, _placeholder);
 }
 
 static void ui_create_metric_card(lv_obj_t *_parent, const char *_title,
@@ -827,31 +896,53 @@ static void ui_build_screen_wifi(UI *_UI) {
 static void ui_build_facility_page(UI *_UI) {
   if (!_UI || !_UI->facility_form)
     return;
+
   lv_obj_clean(_UI->facility_form);
+
   lv_obj_set_layout(_UI->facility_form, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(_UI->facility_form, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_gap(_UI->facility_form, 8, 0);
+
   if (_UI->facility_page == 0) {
     _UI->facility_name_ta = ui_create_form_field(
-        _UI->facility_form, "Facility Name", "Enter facility name");
-    _UI->facility_country_ta =
-        ui_create_form_field(_UI->facility_form, "Country", "Sweden");
-    _UI->facility_address_ta =
-        ui_create_form_field(_UI->facility_form, "Address", "Street address");
+        _UI, _UI->facility_form, "Facility Name", "Enter facility name");
+
+    _UI->facility_address_ta = ui_create_form_field(
+        _UI, _UI->facility_form, "Address", "Street address");
+
+    lv_textarea_set_text(_UI->facility_name_ta,
+                         _UI->facility_cfg.facility_name);
+    lv_textarea_set_text(_UI->facility_address_ta, _UI->facility_cfg.address);
+
   } else if (_UI->facility_page == 1) {
     _UI->facility_city_ta =
-        ui_create_form_field(_UI->facility_form, "City", "City");
-    _UI->facility_zip_ta = ui_create_form_field(
-        _UI->facility_form, "Postal Code", "ZIP / Postal code");
-    _UI->facility_state_ta =
-        ui_create_form_field(_UI->facility_form, "Region", "State / Region");
+        ui_create_form_field(_UI, _UI->facility_form, "City", "City");
+
+    _UI->facility_zip_ta =
+        ui_create_form_field(_UI, _UI->facility_form, "ZIP", "ZIP");
+
+    char zip_buf[8];
+    snprintf(zip_buf, sizeof(zip_buf), "%u", _UI->facility_cfg.zip);
+
+    lv_textarea_set_text(_UI->facility_city_ta, _UI->facility_cfg.city);
+    lv_textarea_set_text(_UI->facility_zip_ta, zip_buf);
+
   } else {
-    _UI->facility_timezone_ta = ui_create_form_field(
-        _UI->facility_form, "Timezone", "Europe/Stockholm");
-    _UI->facility_type_ta = ui_create_form_field(
-        _UI->facility_form, "Facility Type", "Residential / Commercial");
-    _UI->facility_capacity_ta = ui_create_form_field(
-        _UI->facility_form, "Capacity", "Main fuse / power capacity");
+    _UI->facility_lat_ta =
+        ui_create_form_field(_UI, _UI->facility_form, "Latitude", "59.3293");
+
+    _UI->facility_lon_ta =
+        ui_create_form_field(_UI, _UI->facility_form, "Longitude", "18.0686");
+
+    _UI->facility_energy_zone_ta =
+        ui_create_form_field(_UI, _UI->facility_form, "Energy Zone", "1-4");
+
+    char zone_buf[8];
+    snprintf(zone_buf, sizeof(zone_buf), "%u", _UI->facility_cfg.energy_zone);
+
+    lv_textarea_set_text(_UI->facility_lat_ta, _UI->facility_cfg.lat);
+    lv_textarea_set_text(_UI->facility_lon_ta, _UI->facility_cfg.lon);
+    lv_textarea_set_text(_UI->facility_energy_zone_ta, zone_buf);
   }
 }
 
@@ -885,7 +976,15 @@ static void ui_build_screen_facility(UI *_UI) {
   lv_obj_set_style_pad_all(_UI->facility_form, 0, 0);
   lv_obj_clear_flag(_UI->facility_form, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(_UI->facility_form, LV_SCROLLBAR_MODE_OFF);
+  _UI->facility_page = 0;
+
+  esp_err_t err = facility_config_load(&_UI->facility_cfg);
+  if (err != ESP_OK) {
+    memset(&_UI->facility_cfg, 0, sizeof(_UI->facility_cfg));
+  }
+
   ui_build_facility_page(_UI);
+
   lv_obj_t *prev = ui_create_button(panel, "Prev", lv_color_hex(0x374151));
   lv_obj_set_size(prev, 90, 42);
   lv_obj_align(prev, LV_ALIGN_BOTTOM_LEFT, 0, 0);
@@ -1103,60 +1202,73 @@ static void wifi_next_page_event_cb(lv_event_t *_event) {
 static void ui_open_wifi_password(UI *_UI, int _idx) {
   _UI->wifi_network_selected = _idx;
   _UI->wifi_connecting_index = _idx;
+
   _UI->wifi_password_overlay = lv_obj_create(_UI->screen_wifi);
   lv_obj_set_size(_UI->wifi_password_overlay, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_bg_color(_UI->wifi_password_overlay, lv_color_black(), 0);
   lv_obj_set_style_bg_opa(_UI->wifi_password_overlay, LV_OPA_70, 0);
   lv_obj_set_style_border_width(_UI->wifi_password_overlay, 0, 0);
   lv_obj_clear_flag(_UI->wifi_password_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
   _UI->wifi_password_panel = lv_obj_create(_UI->wifi_password_overlay);
-  lv_obj_set_size(_UI->wifi_password_panel, 660, 430);
-  lv_obj_center(_UI->wifi_password_panel);
+  lv_obj_set_size(_UI->wifi_password_panel, 660, 220);
+  lv_obj_align(_UI->wifi_password_panel, LV_ALIGN_TOP_MID, 0, 90);
   lv_obj_set_style_bg_color(_UI->wifi_password_panel, lv_color_hex(C_PANEL), 0);
   lv_obj_set_style_border_color(_UI->wifi_password_panel,
                                 lv_color_hex(C_BORDER), 0);
   lv_obj_set_style_border_width(_UI->wifi_password_panel, 2, 0);
   lv_obj_set_style_radius(_UI->wifi_password_panel, 10, 0);
   lv_obj_set_style_pad_all(_UI->wifi_password_panel, 20, 0);
+
   char title[96];
   snprintf(title, sizeof(title), "Connect to: %s", _UI->wifi_networks[_idx]);
   ui_create_label(_UI->wifi_password_panel, title, lv_color_white());
+
   _UI->wifi_pass_ta =
-      ui_create_textarea(_UI->wifi_password_panel, "Enter password");
+      ui_create_textarea(_UI, _UI->wifi_password_panel, "Enter password");
+
   lv_obj_set_size(_UI->wifi_pass_ta, LV_PCT(100), 48);
   lv_obj_align(_UI->wifi_pass_ta, LV_ALIGN_TOP_LEFT, 0, 50);
   lv_textarea_set_password_mode(_UI->wifi_pass_ta, true);
-  lv_obj_add_event_cb(_UI->wifi_pass_ta, wifi_ta_event_cb, LV_EVENT_FOCUSED,
-                      _UI);
-  lv_obj_add_event_cb(_UI->wifi_pass_ta, wifi_ta_event_cb, LV_EVENT_DEFOCUSED,
-                      _UI);
-  _UI->wifi_keyboard = lv_keyboard_create(_UI->wifi_password_panel);
-  lv_obj_set_size(_UI->wifi_keyboard, LV_PCT(100), 210);
-  lv_obj_align(_UI->wifi_keyboard, LV_ALIGN_TOP_LEFT, 0, 112);
-  lv_keyboard_set_textarea(_UI->wifi_keyboard, _UI->wifi_pass_ta);
+
   lv_obj_t *cancel = ui_create_button(_UI->wifi_password_panel, "Cancel",
                                       lv_color_hex(0x374151));
   lv_obj_set_size(cancel, 120, 42);
   lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
   lv_obj_add_event_cb(cancel, wifi_cancel_event_cb, LV_EVENT_CLICKED, _UI);
+
   _UI->wifi_connect_btn = ui_create_button(_UI->wifi_password_panel, "Connect",
                                            lv_color_hex(C_BLUE));
   lv_obj_set_size(_UI->wifi_connect_btn, 120, 42);
   lv_obj_align(_UI->wifi_connect_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
   lv_obj_add_event_cb(_UI->wifi_connect_btn, connect_event_cb, LV_EVENT_CLICKED,
                       _UI);
+
+  if (_UI->keyboard) {
+    lv_keyboard_set_textarea(_UI->keyboard, _UI->wifi_pass_ta);
+    lv_obj_clear_flag(_UI->keyboard, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(_UI->keyboard);
+    lv_obj_add_state(_UI->wifi_pass_ta, LV_STATE_FOCUSED);
+  }
 }
 static void ui_close_wifi_password(UI *_UI) {
-  if (_UI && _UI->wifi_password_overlay) {
+  if (!_UI)
+    return;
+
+  if (_UI->keyboard) {
+    lv_keyboard_set_textarea(_UI->keyboard, NULL);
+    lv_obj_add_flag(_UI->keyboard, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (_UI->wifi_password_overlay) {
     lv_obj_del(_UI->wifi_password_overlay);
     _UI->wifi_password_overlay = NULL;
     _UI->wifi_password_panel = NULL;
     _UI->wifi_pass_ta = NULL;
-    _UI->wifi_keyboard = NULL;
     _UI->wifi_connect_btn = NULL;
   }
 }
-static void wifi_ta_event_cb(lv_event_t *_event) { (void)_event; }
+
 static void wifi_cancel_event_cb(lv_event_t *_event) {
   UI *_UI = lv_event_get_user_data(_event);
   ui_close_wifi_password(_UI);
@@ -1182,22 +1294,66 @@ static void connect_event_cb(lv_event_t *_event) {
 
 static void facility_prev_event_cb(lv_event_t *_event) {
   UI *_UI = lv_event_get_user_data(_event);
+
   if (_UI && _UI->facility_page > 0) {
+    facility_read_current_page(_UI);
     _UI->facility_page--;
+    if (_UI->keyboard) {
+      lv_keyboard_set_textarea(_UI->keyboard, NULL);
+      lv_obj_add_flag(_UI->keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
     ui_build_facility_page(_UI);
   }
 }
+
 static void facility_next_event_cb(lv_event_t *_event) {
   UI *_UI = lv_event_get_user_data(_event);
+
   if (_UI && _UI->facility_page < 2) {
+    facility_read_current_page(_UI);
     _UI->facility_page++;
+    if (_UI->keyboard) {
+      lv_keyboard_set_textarea(_UI->keyboard, NULL);
+      lv_obj_add_flag(_UI->keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
     ui_build_facility_page(_UI);
   }
 }
+
 static void facility_save_event_cb(lv_event_t *_event) {
   UI *_UI = lv_event_get_user_data(_event);
-  if (_UI && _UI->facility_status_label)
-    lv_label_set_text(_UI->facility_status_label, "Saved facility");
+
+  if (!_UI)
+    return;
+
+  facility_read_current_page(_UI);
+
+  if (_UI->keyboard) {
+    lv_keyboard_set_textarea(_UI->keyboard, NULL);
+    lv_obj_add_flag(_UI->keyboard, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (_UI->facility_save_btn) {
+    lv_obj_add_state(_UI->facility_save_btn, LV_STATE_DISABLED);
+  }
+
+  esp_err_t err = facility_config_set_all(&_UI->facility_cfg);
+
+  if (_UI->facility_save_btn) {
+    lv_obj_clear_state(_UI->facility_save_btn, LV_STATE_DISABLED);
+  }
+
+  if (_UI->facility_status_label) {
+    if (err == ESP_OK) {
+      lv_label_set_text(_UI->facility_status_label, "Saved facility");
+      lv_obj_set_style_text_color(_UI->facility_status_label,
+                                  lv_color_hex(C_GREEN), 0);
+    } else {
+      lv_label_set_text(_UI->facility_status_label, "Failed to save");
+      lv_obj_set_style_text_color(_UI->facility_status_label,
+                                  lv_color_hex(C_RED), 0);
+    }
+  }
 }
 
 void ui_set_wifi_form_status(UI *_UI, const char *_msg, bool _error) {
@@ -1289,6 +1445,26 @@ void ui_set_wifi_network_list(UI *_UI, const char *_options) {
   ui_set_wifi_form_status(
       _UI, _UI->wifi_network_count > 0 ? "Scan complete" : "No networks found",
       _UI->wifi_network_count == 0);
+}
+
+static void ui_hide_keyboard(UI *_UI) {
+  if (!_UI || !_UI->keyboard)
+    return;
+
+  lv_keyboard_set_textarea(_UI->keyboard, NULL);
+  lv_obj_add_flag(_UI->keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void keyboard_event_cb(lv_event_t *e) {
+  UI *_UI = lv_event_get_user_data(e);
+  lv_event_code_t code = lv_event_get_code(e);
+
+  if (!_UI)
+    return;
+
+  if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
+    ui_hide_keyboard(_UI);
+  }
 }
 
 void ui_set_time(UI *_UI, uint8_t h, uint8_t m, uint8_t s) {
