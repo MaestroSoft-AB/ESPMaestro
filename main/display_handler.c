@@ -265,7 +265,7 @@ int display_handler_init(DH *_DH) {
   }
 
   g_date_status_mutex = xSemaphoreCreateMutex();
-  if (!g_time_status_mutex) {
+  if (!g_date_status_mutex) {
     ESP_LOGE(TAG, "Failed to create date status mutex");
     return -1;
   }
