@@ -11,7 +11,7 @@ static const char *TAG = "DashboardData";
 
 #ifndef OPTIMAESTRO_DISPLAY_GRAPH_URL
 #define OPTIMAESTRO_DISPLAY_GRAPH_URL                                             \
-  "http://100.68.34.53:10580/api/v1/display/graph/hour"
+  "http://135.225.131.246:10580/api/v1/display/graph/hour"
 #endif
 
 #define OPTIMAESTRO_PROFILE_BUCKETS 96
