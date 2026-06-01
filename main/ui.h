@@ -1,9 +1,15 @@
 #ifndef __UI_H_
 #define __UI_H_
 
+#include "dashboard_types.h"
 #include "facility_config.h"
 #include "lvgl.h"
 #include <stdbool.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef enum {
   UI_SCREEN_HOME = 0,
@@ -102,6 +108,20 @@ typedef struct {
   int wifi_network_count;
   int wifi_network_selected;
   Facility_Config facility_cfg;
+
+  lv_obj_t *energy_kwh_chart;
+  lv_obj_t *energy_cost_chart;
+  lv_obj_t *energy_power_chart;
+  lv_obj_t *energy_power_label;
+  lv_obj_t *energy_max_power_label;
+  lv_chart_series_t *energy_kwh_series;
+  lv_chart_series_t *energy_cost_series;
+  lv_chart_series_t *energy_power_series;
+
+  WeatherData cached_weather;
+  ElectricityData cached_electricity;
+  RealtimeData cached_realtime;
+  bool has_dashboard_data;
 } UI;
 
 void ui_init(UI *_UI);
@@ -115,4 +135,11 @@ void ui_set_wifi_status(UI *_UI, bool _connected, const char *_ssid,
                         const char *_ip);
 void ui_set_wifi_network_list(UI *_UI, const char *_options);
 void ui_set_date(UI *_UI, uint16_t year, uint8_t month, uint8_t day);
+void ui_set_dashboard_data(UI *ui, const WeatherData *w,
+                           const ElectricityData *e, const RealtimeData *r);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif

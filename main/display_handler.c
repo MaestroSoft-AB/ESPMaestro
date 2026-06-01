@@ -46,6 +46,13 @@ static SemaphoreHandle_t g_time_status_mutex = NULL;
 static DH_date_status g_date_status = {0};
 static SemaphoreHandle_t g_date_status_mutex = NULL;
 
+/*---------------------------Dashboard--------------------------------------*/
+static WeatherData g_weather;
+static ElectricityData g_electricity;
+static RealtimeData g_realtime;
+static bool g_dashboard_ready = false;
+static SemaphoreHandle_t g_dashboard_mutex = NULL;
+
 /* -------------------------------PERF OVERLAY------------------------- */
 static lv_obj_t *g_perf_label = NULL;
 static uint32_t g_perf_frame_count = 0;
@@ -193,6 +200,26 @@ void display_handler_update_date(uint16_t year, uint8_t month, uint8_t day) {
 }
 
 /******************************************************************/
+
+void display_handler_update_dashboard(const WeatherData *w,
+                                      const ElectricityData *e,
+                                      const RealtimeData *r) {
+  if (!g_dashboard_mutex)
+    return;
+
+  if (xSemaphoreTake(g_dashboard_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    if (w)
+      g_weather = *w;
+    if (e)
+      g_electricity = *e;
+    if (r)
+      g_realtime = *r;
+    g_dashboard_ready = true;
+    xSemaphoreGive(g_dashboard_mutex);
+  }
+}
+
+/*****************************************************************/
 static char *get_iso_time_string(void) {
   time_t epoch = time(NULL);
   struct tm *tm = gmtime(&epoch);
@@ -270,6 +297,12 @@ int display_handler_init(DH *_DH) {
     return -1;
   }
 
+  g_dashboard_mutex = xSemaphoreCreateMutex();
+  if (!g_dashboard_mutex) {
+    ESP_LOGE(TAG, "Failed to create dashboard mutex");
+    return -1;
+  }
+
   return 0;
 }
 
@@ -293,6 +326,11 @@ void display_handler_work(void *_null_for_now) {
     bool need_ui_update = false;
     bool need_time_update = false;
     bool need_date_update = false;
+    bool need_dashboard_update = false;
+
+    WeatherData w;
+    ElectricityData e;
+    RealtimeData r;
 
     if (g_wifi_status_mutex &&
         xSemaphoreTake(g_wifi_status_mutex, 0) == pdTRUE) {
@@ -361,6 +399,21 @@ void display_handler_work(void *_null_for_now) {
       if (need_date_update) {
         ui_set_date(&g_ui, g_date_status.year, g_date_status.month,
                     g_date_status.day);
+      }
+
+      if (g_dashboard_mutex && xSemaphoreTake(g_dashboard_mutex, 0) == pdTRUE) {
+        if (g_dashboard_ready) {
+          w = g_weather;
+          e = g_electricity;
+          r = g_realtime;
+          g_dashboard_ready = false;
+          need_dashboard_update = true;
+        }
+        xSemaphoreGive(g_dashboard_mutex);
+      }
+
+      if (need_dashboard_update) {
+        ui_set_dashboard_data(&g_ui, &w, &e, &r);
       }
 
       /* Perf overlay tick */

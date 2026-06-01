@@ -139,6 +139,116 @@ static void textarea_event_cb(lv_event_t *e) {
 }
 
 /*****************************************************/
+
+/****************************CHART********************/
+
+static int ui_max_float_scaled(const float *v, int count, float scale) {
+  int max_v = 1;
+
+  for (int i = 0; i < count; i++) {
+    int s = (int)(v[i] * scale);
+    if (s > max_v) {
+      max_v = s;
+    }
+  }
+
+  return max_v;
+}
+
+static int ui_max_u32(const uint32_t *v, int count) {
+  int max_v = 1;
+  for (int i = 0; i < count; i++) {
+    if ((int)v[i] > max_v)
+      max_v = (int)v[i];
+  }
+  return max_v;
+}
+
+static void ui_style_chart(lv_obj_t *chart) {
+  lv_obj_set_style_bg_color(chart, lv_color_hex(C_CARD_DARK), 0);
+  lv_obj_set_style_border_color(chart, lv_color_hex(C_BORDER), 0);
+  lv_obj_set_style_border_width(chart, 1, 0);
+  lv_obj_set_style_radius(chart, 8, 0);
+  lv_obj_clear_flag(chart, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(chart, LV_SCROLLBAR_MODE_OFF);
+  lv_chart_set_div_line_count(chart, 5, 6);
+}
+
+static void ui_set_bar_chart_float(lv_obj_t *chart, lv_chart_series_t *ser,
+                                   const float *values, int count,
+                                   float scale) {
+  if (!chart || !ser || !values)
+    return;
+
+  lv_chart_set_type(chart, LV_CHART_TYPE_BAR);
+  lv_chart_set_point_count(chart, count);
+  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0,
+                     ui_max_float_scaled(values, count, scale) + 5);
+
+  for (int i = 0; i < count; i++) {
+    lv_chart_set_value_by_id(chart, ser, i,
+                             (lv_coord_t)(values[i] * scale));
+  }
+
+  lv_chart_refresh(chart);
+}
+
+static void ui_set_line_chart_u32(lv_obj_t *chart, lv_chart_series_t *ser,
+                                  const uint32_t *values, int count) {
+  if (!chart || !ser || !values)
+    return;
+
+  lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
+  lv_chart_set_point_count(chart, count);
+  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0,
+                     ui_max_u32(values, count) + 200);
+
+  for (int i = 0; i < count; i++) {
+    lv_chart_set_value_by_id(chart, ser, i, (lv_coord_t)values[i]);
+  }
+
+  lv_chart_refresh(chart);
+}
+
+void ui_set_dashboard_data(UI *ui, const WeatherData *weather,
+                           const ElectricityData *electricity,
+                           const RealtimeData *realtime) {
+  if (ui == NULL || weather == NULL || electricity == NULL ||
+      realtime == NULL || realtime->valid == false) {
+    return;
+  }
+
+  ui->cached_weather = *weather;
+  ui->cached_electricity = *electricity;
+  ui->cached_realtime = *realtime;
+  ui->has_dashboard_data = true;
+
+  if (ui->energy_kwh_chart != NULL && ui->energy_kwh_series != NULL) {
+    ui_set_bar_chart_float(ui->energy_kwh_chart, ui->energy_kwh_series,
+                           realtime->kwh_24h, 24, 100.0f);
+  }
+
+  if (ui->energy_cost_chart != NULL && ui->energy_cost_series != NULL) {
+    ui_set_bar_chart_float(ui->energy_cost_chart, ui->energy_cost_series,
+                           realtime->cost_24h, 24, 100.0f);
+  }
+
+  if (ui->energy_power_chart != NULL && ui->energy_power_series != NULL) {
+    ui_set_line_chart_u32(ui->energy_power_chart, ui->energy_power_series,
+                          realtime->power_24h, 24);
+  }
+
+  if (ui->energy_power_label != NULL) {
+    lv_label_set_text_fmt(ui->energy_power_label, "Nu: %lu W",
+                          (unsigned long)realtime->power_w);
+  }
+
+  if (ui->energy_max_power_label != NULL) {
+    lv_label_set_text_fmt(ui->energy_max_power_label, "Max 24h: %lu W",
+                          (unsigned long)realtime->max_power_w_24h);
+  }
+}
+/*--------------------------------------------------------------*/
 void ui_init(UI *_UI) {
   if (!_UI)
     return;
@@ -356,6 +466,14 @@ static void ui_destroy_active_screen(UI *_UI) {
   _UI->elpriser_table = NULL;
   _UI->elpriser_graph_btn = NULL;
   _UI->elpriser_table_btn = NULL;
+  _UI->energy_kwh_chart = NULL;
+  _UI->energy_cost_chart = NULL;
+  _UI->energy_power_chart = NULL;
+  _UI->energy_power_label = NULL;
+  _UI->energy_max_power_label = NULL;
+  _UI->energy_kwh_series = NULL;
+  _UI->energy_cost_series = NULL;
+  _UI->energy_power_series = NULL;
   _UI->wifi_pass_ta = NULL;
   _UI->wifi_status_label = NULL;
   _UI->wifi_connect_btn = NULL;
@@ -424,6 +542,11 @@ void ui_show_screen(UI *_UI, UI_Screen _screen) {
   ui_destroy_active_screen(_UI);
   ui_build_active_screen(_UI, _screen);
   ui_update_nav(_UI);
+
+  if (_screen == UI_SCREEN_ELPRISER && _UI->has_dashboard_data) {
+    ui_set_dashboard_data(_UI, &_UI->cached_weather, &_UI->cached_electricity,
+                          &_UI->cached_realtime);
+  }
 }
 
 static void ui_update_nav(UI *_UI) {
@@ -674,73 +797,74 @@ static void ui_build_screen_forecast(UI *_UI) {
 }
 
 static void ui_build_screen_elpriser(UI *_UI) {
-  static const int price[] = {45, 52, 68, 85, 95, 78, 68, 55, 42};
-  const char *rows[][3] = {
-      {"00:00", "45", "0"},  {"03:00", "52", "0"},  {"06:00", "68", "20"},
-      {"09:00", "85", "60"}, {"12:00", "95", "85"}, {"15:00", "78", "70"},
-      {"18:00", "68", "30"}, {"21:00", "55", "5"},  {"24:00", "42", "0"}};
   _UI->screen_elpriser = lv_obj_create(_UI->content);
   _UI->active_screen = _UI->screen_elpriser;
-  lv_obj_clear_flag(_UI->screen_elpriser, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_scrollbar_mode(_UI->screen_elpriser, LV_SCROLLBAR_MODE_OFF);
+
   lv_obj_set_size(_UI->screen_elpriser, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_bg_color(_UI->screen_elpriser, lv_color_hex(C_BLACK), 0);
   lv_obj_set_style_border_width(_UI->screen_elpriser, 0, 0);
-  lv_obj_set_style_pad_all(_UI->screen_elpriser, 24, 0);
+  lv_obj_set_style_pad_all(_UI->screen_elpriser, 18, 0);
   lv_obj_clear_flag(_UI->screen_elpriser, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(_UI->screen_elpriser, LV_SCROLLBAR_MODE_OFF);
+
   lv_obj_t *panel = ui_create_panel(_UI->screen_elpriser);
-  lv_obj_set_size(panel, 880, 430);
+  lv_obj_set_size(panel, 940, 455);
   lv_obj_center(panel);
   lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_t *title = ui_create_label(panel, "Elpriser", lv_color_white());
+
+  lv_obj_t *title =
+      ui_create_label(panel, "Energi senaste 24h", lv_color_white());
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
-  _UI->elpriser_table_btn =
-      ui_create_button(panel, "Table", lv_color_hex(C_CARD));
-  lv_obj_set_size(_UI->elpriser_table_btn, 86, 38);
-  lv_obj_align(_UI->elpriser_table_btn, LV_ALIGN_BOTTOM_RIGHT, -96, 0);
-  lv_obj_add_event_cb(_UI->elpriser_table_btn, view_toggle_event_cb,
-                      LV_EVENT_CLICKED, _UI);
 
-  _UI->elpriser_graph_btn =
-      ui_create_button(panel, "Graph", lv_color_hex(C_BLUE));
-  lv_obj_set_size(_UI->elpriser_graph_btn, 86, 38);
-  lv_obj_align(_UI->elpriser_graph_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-  lv_obj_add_event_cb(_UI->elpriser_graph_btn, view_toggle_event_cb,
-                      LV_EVENT_CLICKED, _UI);
-  lv_obj_t *elpriser_view_box = lv_obj_create(panel);
-  lv_obj_set_size(elpriser_view_box, LV_PCT(100), 235);
-  lv_obj_align(elpriser_view_box, LV_ALIGN_TOP_LEFT, 0, 66);
-  lv_obj_set_style_bg_opa(elpriser_view_box, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(elpriser_view_box, 0, 0);
-  lv_obj_set_style_pad_all(elpriser_view_box, 0, 0);
-  lv_obj_clear_flag(elpriser_view_box, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_scrollbar_mode(elpriser_view_box, LV_SCROLLBAR_MODE_OFF);
+  _UI->energy_power_label =
+      ui_create_label(panel, "Nu: -- W", lv_color_hex(C_GREEN));
+  lv_obj_align(_UI->energy_power_label, LV_ALIGN_TOP_RIGHT, 0, 0);
 
-  _UI->elpriser_chart = lv_chart_create(elpriser_view_box);
-  lv_obj_set_size(_UI->elpriser_chart, LV_PCT(100), 220);
-  lv_obj_align(_UI->elpriser_chart, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_clear_flag(_UI->elpriser_chart, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_scrollbar_mode(_UI->elpriser_chart, LV_SCROLLBAR_MODE_OFF);
-  ui_fill_chart(_UI->elpriser_chart, price, 9, lv_color_hex(C_YELLOW));
+  _UI->energy_max_power_label =
+      ui_create_label(panel, "Max 24h: -- W", lv_color_hex(C_MUTED));
+  lv_obj_align(_UI->energy_max_power_label, LV_ALIGN_TOP_RIGHT, 0, 28);
 
-  _UI->elpriser_table = lv_table_create(elpriser_view_box);
-  lv_obj_set_size(_UI->elpriser_table, LV_PCT(100), 220);
-  lv_obj_align(_UI->elpriser_table, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_clear_flag(_UI->elpriser_table, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_scrollbar_mode(_UI->elpriser_table, LV_SCROLLBAR_MODE_OFF);
-  lv_table_set_col_cnt(_UI->elpriser_table, 3);
-  lv_table_set_row_cnt(_UI->elpriser_table, 10);
-  lv_table_set_cell_value(_UI->elpriser_table, 0, 0, "Tid");
-  lv_table_set_cell_value(_UI->elpriser_table, 0, 1, "Pris");
-  lv_table_set_cell_value(_UI->elpriser_table, 0, 2, "Sol %");
-  for (int i = 0; i < 9; i++) {
-    for (int j = 0; j < 3; j++) {
-      lv_table_set_cell_value(_UI->elpriser_table, i + 1, j, rows[i][j]);
-    }
-  }
-  lv_obj_add_flag(_UI->elpriser_table, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_t *kwh_label =
+      ui_create_label(panel, "Förbrukning / h, kWh", lv_color_hex(C_MUTED));
+  lv_obj_align(kwh_label, LV_ALIGN_TOP_LEFT, 0, 54);
+
+  _UI->energy_kwh_chart = lv_chart_create(panel);
+  lv_obj_set_size(_UI->energy_kwh_chart, 440, 145);
+  lv_obj_align(_UI->energy_kwh_chart, LV_ALIGN_TOP_LEFT, 0, 82);
+  ui_style_chart(_UI->energy_kwh_chart);
+  lv_chart_set_type(_UI->energy_kwh_chart, LV_CHART_TYPE_BAR);
+  lv_chart_set_point_count(_UI->energy_kwh_chart, 24);
+  _UI->energy_kwh_series =
+      lv_chart_add_series(_UI->energy_kwh_chart, lv_color_hex(C_GREEN),
+                          LV_CHART_AXIS_PRIMARY_Y);
+
+  lv_obj_t *cost_label =
+      ui_create_label(panel, "Kostnad / h, SEK", lv_color_hex(C_MUTED));
+  lv_obj_align(cost_label, LV_ALIGN_TOP_RIGHT, -300, 54);
+
+  _UI->energy_cost_chart = lv_chart_create(panel);
+  lv_obj_set_size(_UI->energy_cost_chart, 440, 145);
+  lv_obj_align(_UI->energy_cost_chart, LV_ALIGN_TOP_RIGHT, 0, 82);
+  ui_style_chart(_UI->energy_cost_chart);
+  lv_chart_set_type(_UI->energy_cost_chart, LV_CHART_TYPE_BAR);
+  lv_chart_set_point_count(_UI->energy_cost_chart, 24);
+  _UI->energy_cost_series =
+      lv_chart_add_series(_UI->energy_cost_chart, lv_color_hex(C_YELLOW),
+                          LV_CHART_AXIS_PRIMARY_Y);
+
+  lv_obj_t *power_label =
+      ui_create_label(panel, "Effekt senaste 24h, W", lv_color_hex(C_MUTED));
+  lv_obj_align(power_label, LV_ALIGN_TOP_LEFT, 0, 242);
+
+  _UI->energy_power_chart = lv_chart_create(panel);
+  lv_obj_set_size(_UI->energy_power_chart, LV_PCT(100), 145);
+  lv_obj_align(_UI->energy_power_chart, LV_ALIGN_TOP_LEFT, 0, 270);
+  ui_style_chart(_UI->energy_power_chart);
+  lv_chart_set_type(_UI->energy_power_chart, LV_CHART_TYPE_LINE);
+  lv_chart_set_point_count(_UI->energy_power_chart, 24);
+  _UI->energy_power_series =
+      lv_chart_add_series(_UI->energy_power_chart, lv_color_hex(C_BLUE),
+                          LV_CHART_AXIS_PRIMARY_Y);
 }
 
 static void ui_create_settings_card(UI *_UI, lv_obj_t *_parent, lv_obj_t **_out,

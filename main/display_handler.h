@@ -1,6 +1,7 @@
 #ifndef __ESPM_DISPLAY_HANDLER_H__
 #define __ESPM_DISPLAY_HANDLER_H__
 
+#include "dashboard_types.h"
 #include "wifi_handler.h"
 #include <stdbool.h>
 #include <stdlib.h>
@@ -56,6 +57,9 @@ void display_handler_wifi_status(bool connected, const char *ssid,
 
 void display_handler_update_time(uint8_t h, uint8_t m, uint8_t s);
 void display_handler_update_date(uint16_t year, uint8_t month, uint8_t day);
+void display_handler_update_dashboard(const WeatherData *w,
+                                      const ElectricityData *e,
+                                      const RealtimeData *r);
 // void dh_dispose(DH* _DH);
 
 /* ========================================================= */

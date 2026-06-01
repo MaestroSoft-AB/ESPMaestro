@@ -1,6 +1,7 @@
 /******************** ESPMaestro ********************/
 /* Copyright MaestroSoft Corp AB Inc LLC Unlimited. */
 
+#include "dashboard_data.hpp"
 #include "display_handler.h"
 #include "esp_log.h"
 #include "facility_config.h"
@@ -13,6 +14,7 @@
 #include "wifi_handler.h"
 #include <stdio.h>
 #include <string.h>
+
 static const char *TAG = "main";
 
 extern "C" void app_main(void) {
@@ -53,7 +55,7 @@ extern "C" void app_main(void) {
     ESP_LOGE(TAG, "Failed to init wifi manager");
     return;
   }
-
+  static DashboardData dashboard_data;
   static UiStatus uistatus;
 }
 
