@@ -17,11 +17,11 @@ static void dbd_make_mock_data(DashboardData *self) {
   uint32_t max_power = 0;
 
   for (int i = 0; i < 24; i++) {
-    // enkel dygnskurva: låg natt, hög morgon/kväll
+    // Simple daily curve: low at night, high in the morning/evening.
     uint32_t p = 250 + ((i >= 6 && i <= 9) ? 900 : 0) +
                  ((i >= 17 && i <= 21) ? 1400 : 0) + ((i * 73) % 350);
 
-    float kwh = p / 1000.0f; // ungefär 1 timmes förbrukning
+    float kwh = p / 1000.0f; // About one hour of consumption.
     float price = 0.65f + ((i * 11) % 60) / 100.0f;
     float cost = kwh * price;
 

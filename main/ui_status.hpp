@@ -20,6 +20,8 @@ private:
   Scheduler_Task *task_;
   bool time_valid_;
   bool initialized_;
+  UIStatusState logged_state_;
+  bool has_logged_state_;
   uint8_t hour;
   uint8_t minute;
   uint8_t second;
@@ -62,6 +64,8 @@ public:
   void sync_time_from_ntp(uint32_t epoch, uint64_t now_ms);
 
   void update_clock(uint64_t now_ms);
+
+  bool should_log_state(UIStatusState state);
 
   ~UiStatus();
 };

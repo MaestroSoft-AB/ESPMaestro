@@ -8,6 +8,21 @@ static const char *TAG = "ui status";
 static void ui_status_taskwork(void *_context, uint64_t _montime);
 
 /***********************Internal Helpers******************/
+static const char *ui_status_state_name(UIStatusState state) {
+  switch (state) {
+  case UI_STATUS_INIT:
+    return "UI_STATUS_INIT";
+  case UI_STATUS_WAIT_NTP:
+    return "UI_STATUS_WAIT_NTP";
+  case UI_STATUS_IDLE:
+    return "UI_STATUS_IDLE";
+  case UI_STATUS_UPDATE_CLOCK:
+    return "UI_STATUS_UPDATE_CLOCK";
+  default:
+    return "UI_STATUS_UNKNOWN";
+  }
+}
+
 static void init_timezone_sweden() {
   setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
   tzset();
@@ -42,14 +57,17 @@ static void ui_status_taskwork(void *_context, uint64_t _now) {
   if (self == nullptr)
     return;
 
-  switch (self->get_state()) {
+  UIStatusState state = self->get_state();
+  if (state != UI_STATUS_UPDATE_CLOCK && self->should_log_state(state)) {
+    ESP_LOGI(TAG, "%s", ui_status_state_name(state));
+  }
+
+  switch (state) {
   case UI_STATUS_INIT:
-    ESP_LOGI(TAG, "UI_STATUS_INIT");
     self->set_state(ui_status_init());
     break;
 
   case UI_STATUS_WAIT_NTP:
-    ESP_LOGI(TAG, "UI_STATUS_WAIT_NTP");
     self->set_state(ui_status_wait_ntp(self, _now));
     break;
 
@@ -79,12 +97,22 @@ void UiStatus::sync_time_from_ntp(uint32_t epoch, uint64_t now_ms) {
 
 UiStatus::UiStatus()
     : state_(UI_STATUS_INIT), base_epoch_(0), base_ms_(0), next_clock_ms_(0),
-      task_(nullptr), time_valid_(false), initialized_(true), hour(0),
-      minute(0), second(0) {
+      task_(nullptr), time_valid_(false), initialized_(true),
+      logged_state_(UI_STATUS_INIT), has_logged_state_(false), hour(0), minute(0),
+      second(0) {
   task_ = scheduler_create_task(this, ui_status_taskwork);
   if (task_ == nullptr) {
     initialized_ = false;
   }
+}
+
+bool UiStatus::should_log_state(UIStatusState state) {
+  if (has_logged_state_ && logged_state_ == state)
+    return false;
+
+  logged_state_ = state;
+  has_logged_state_ = true;
+  return true;
 }
 
 void UiStatus::update_clock(uint64_t now_ms) {

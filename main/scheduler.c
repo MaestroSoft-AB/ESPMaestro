@@ -8,6 +8,11 @@ Scheduler Global_Scheduler;
  * task-loop needs to take at a minimum */
 
 /* ----------------------------------------------------------- */
+static TickType_t scheduler_delay_ticks(uint64_t delay_ms) {
+  TickType_t ticks = pdMS_TO_TICKS(delay_ms);
+  return ticks > 0 ? ticks : 1;
+}
+
 void scheduler_task(void *null_for_now) {
   (void)null_for_now;
 
@@ -19,9 +24,9 @@ void scheduler_task(void *null_for_now) {
     uint64_t elapsed = SystemMonotonicMS() - start;
 
     if (elapsed < MIN_LOOP_MS) {
-      vTaskDelay(pdMS_TO_TICKS(MIN_LOOP_MS - elapsed));
+      vTaskDelay(scheduler_delay_ticks(MIN_LOOP_MS - elapsed));
     } else {
-      vTaskDelay(pdMS_TO_TICKS(1));
+      vTaskDelay(1);
     }
   }
 }

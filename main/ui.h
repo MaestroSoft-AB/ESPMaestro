@@ -97,6 +97,9 @@ typedef struct {
 
   lv_obj_t *nav_clock_label;
   lv_obj_t *nav_date_label;
+  uint8_t current_hour;
+  uint8_t current_minute;
+  bool has_time;
 
   UI_Screen current_screen;
   bool wifi_connecting;

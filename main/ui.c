@@ -142,6 +142,9 @@ static void textarea_event_cb(lv_event_t *e) {
 
 /****************************CHART********************/
 
+#define UI_ENERGY_CHART_POINTS 24
+#define UI_ENERGY_TIME_TICKS 5
+
 static int ui_max_float_scaled(const float *v, int count, float scale) {
   int max_v = 1;
 
@@ -164,6 +167,35 @@ static int ui_max_u32(const uint32_t *v, int count) {
   return max_v;
 }
 
+static void ui_energy_chart_time_label(int tick, char *buf, uint32_t buf_size) {
+  if (buf == NULL || buf_size == 0)
+    return;
+
+  if (tick < 0)
+    tick = 0;
+  if (tick >= UI_ENERGY_TIME_TICKS)
+    tick = UI_ENERGY_TIME_TICKS - 1;
+
+  if (tick == UI_ENERGY_TIME_TICKS - 1) {
+    snprintf(buf, buf_size, "24:00");
+  } else {
+    snprintf(buf, buf_size, "%02d:00", tick * 6);
+  }
+}
+
+static void chart_time_axis_draw_cb(lv_event_t *e) {
+  lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
+  if (!lv_obj_draw_part_check_type(dsc, &lv_chart_class,
+                                   LV_CHART_DRAW_PART_TICK_LABEL)) {
+    return;
+  }
+
+  if (dsc->id != LV_CHART_AXIS_PRIMARY_X || dsc->text == NULL)
+    return;
+
+  ui_energy_chart_time_label(dsc->value, dsc->text, dsc->text_length);
+}
+
 static void ui_style_chart(lv_obj_t *chart) {
   lv_obj_set_style_bg_color(chart, lv_color_hex(C_CARD_DARK), 0);
   lv_obj_set_style_border_color(chart, lv_color_hex(C_BORDER), 0);
@@ -172,6 +204,15 @@ static void ui_style_chart(lv_obj_t *chart) {
   lv_obj_clear_flag(chart, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(chart, LV_SCROLLBAR_MODE_OFF);
   lv_chart_set_div_line_count(chart, 5, 6);
+}
+
+static void ui_configure_energy_chart(UI *ui, lv_obj_t *chart) {
+  ui_style_chart(chart);
+  lv_chart_set_point_count(chart, UI_ENERGY_CHART_POINTS);
+  lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 4, 2,
+                         UI_ENERGY_TIME_TICKS, 1, true, 30);
+  lv_obj_add_event_cb(chart, chart_time_axis_draw_cb, LV_EVENT_DRAW_PART_BEGIN,
+                      ui);
 }
 
 static void ui_set_bar_chart_float(lv_obj_t *chart, lv_chart_series_t *ser,
@@ -186,8 +227,7 @@ static void ui_set_bar_chart_float(lv_obj_t *chart, lv_chart_series_t *ser,
                      ui_max_float_scaled(values, count, scale) + 5);
 
   for (int i = 0; i < count; i++) {
-    lv_chart_set_value_by_id(chart, ser, i,
-                             (lv_coord_t)(values[i] * scale));
+    lv_chart_set_value_by_id(chart, ser, i, (lv_coord_t)(values[i] * scale));
   }
 
   lv_chart_refresh(chart);
@@ -239,7 +279,7 @@ void ui_set_dashboard_data(UI *ui, const WeatherData *weather,
   }
 
   if (ui->energy_power_label != NULL) {
-    lv_label_set_text_fmt(ui->energy_power_label, "Nu: %lu W",
+    lv_label_set_text_fmt(ui->energy_power_label, "Now: %lu W",
                           (unsigned long)realtime->power_w);
   }
 
@@ -704,7 +744,7 @@ static void ui_build_screen_home(UI *_UI) {
                         lv_color_hex(C_BLUE));
   ui_create_metric_card(col2, "Forecast", "Low solar", "Updated recently",
                         lv_color_hex(C_YELLOW));
-  ui_create_metric_card(col3, "Current price", "68 öre/kWh",
+  ui_create_metric_card(col3, "Current price", "0.68 SEK/kWh",
                         "Normal price level", lv_color_hex(C_YELLOW));
   ui_create_metric_card(col3, "Meter", "Waiting", "P1/HAN data not wired",
                         lv_color_hex(C_PURPLE));
@@ -812,12 +852,11 @@ static void ui_build_screen_elpriser(UI *_UI) {
   lv_obj_center(panel);
   lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_t *title =
-      ui_create_label(panel, "Energi senaste 24h", lv_color_white());
+  lv_obj_t *title = ui_create_label(panel, "Energy last 24h", lv_color_white());
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
 
   _UI->energy_power_label =
-      ui_create_label(panel, "Nu: -- W", lv_color_hex(C_GREEN));
+      ui_create_label(panel, "Now: -- W", lv_color_hex(C_GREEN));
   lv_obj_align(_UI->energy_power_label, LV_ALIGN_TOP_RIGHT, 0, 0);
 
   _UI->energy_max_power_label =
@@ -825,46 +864,40 @@ static void ui_build_screen_elpriser(UI *_UI) {
   lv_obj_align(_UI->energy_max_power_label, LV_ALIGN_TOP_RIGHT, 0, 28);
 
   lv_obj_t *kwh_label =
-      ui_create_label(panel, "Förbrukning / h, kWh", lv_color_hex(C_MUTED));
+      ui_create_label(panel, "Consumption / h, kWh", lv_color_hex(C_MUTED));
   lv_obj_align(kwh_label, LV_ALIGN_TOP_LEFT, 0, 54);
 
   _UI->energy_kwh_chart = lv_chart_create(panel);
-  lv_obj_set_size(_UI->energy_kwh_chart, 440, 145);
+  lv_obj_set_size(_UI->energy_kwh_chart, 440, 125);
   lv_obj_align(_UI->energy_kwh_chart, LV_ALIGN_TOP_LEFT, 0, 82);
-  ui_style_chart(_UI->energy_kwh_chart);
+  ui_configure_energy_chart(_UI, _UI->energy_kwh_chart);
   lv_chart_set_type(_UI->energy_kwh_chart, LV_CHART_TYPE_BAR);
-  lv_chart_set_point_count(_UI->energy_kwh_chart, 24);
-  _UI->energy_kwh_series =
-      lv_chart_add_series(_UI->energy_kwh_chart, lv_color_hex(C_GREEN),
-                          LV_CHART_AXIS_PRIMARY_Y);
+  _UI->energy_kwh_series = lv_chart_add_series(
+      _UI->energy_kwh_chart, lv_color_hex(C_GREEN), LV_CHART_AXIS_PRIMARY_Y);
 
   lv_obj_t *cost_label =
-      ui_create_label(panel, "Kostnad / h, SEK", lv_color_hex(C_MUTED));
+      ui_create_label(panel, "Cost / h, SEK", lv_color_hex(C_MUTED));
   lv_obj_align(cost_label, LV_ALIGN_TOP_RIGHT, -300, 54);
 
   _UI->energy_cost_chart = lv_chart_create(panel);
-  lv_obj_set_size(_UI->energy_cost_chart, 440, 145);
+  lv_obj_set_size(_UI->energy_cost_chart, 440, 125);
   lv_obj_align(_UI->energy_cost_chart, LV_ALIGN_TOP_RIGHT, 0, 82);
-  ui_style_chart(_UI->energy_cost_chart);
+  ui_configure_energy_chart(_UI, _UI->energy_cost_chart);
   lv_chart_set_type(_UI->energy_cost_chart, LV_CHART_TYPE_BAR);
-  lv_chart_set_point_count(_UI->energy_cost_chart, 24);
-  _UI->energy_cost_series =
-      lv_chart_add_series(_UI->energy_cost_chart, lv_color_hex(C_YELLOW),
-                          LV_CHART_AXIS_PRIMARY_Y);
+  _UI->energy_cost_series = lv_chart_add_series(
+      _UI->energy_cost_chart, lv_color_hex(C_YELLOW), LV_CHART_AXIS_PRIMARY_Y);
 
   lv_obj_t *power_label =
-      ui_create_label(panel, "Effekt senaste 24h, W", lv_color_hex(C_MUTED));
+      ui_create_label(panel, "Power last 24h, W", lv_color_hex(C_MUTED));
   lv_obj_align(power_label, LV_ALIGN_TOP_LEFT, 0, 242);
 
   _UI->energy_power_chart = lv_chart_create(panel);
-  lv_obj_set_size(_UI->energy_power_chart, LV_PCT(100), 145);
+  lv_obj_set_size(_UI->energy_power_chart, LV_PCT(100), 125);
   lv_obj_align(_UI->energy_power_chart, LV_ALIGN_TOP_LEFT, 0, 270);
-  ui_style_chart(_UI->energy_power_chart);
+  ui_configure_energy_chart(_UI, _UI->energy_power_chart);
   lv_chart_set_type(_UI->energy_power_chart, LV_CHART_TYPE_LINE);
-  lv_chart_set_point_count(_UI->energy_power_chart, 24);
-  _UI->energy_power_series =
-      lv_chart_add_series(_UI->energy_power_chart, lv_color_hex(C_BLUE),
-                          LV_CHART_AXIS_PRIMARY_Y);
+  _UI->energy_power_series = lv_chart_add_series(
+      _UI->energy_power_chart, lv_color_hex(C_BLUE), LV_CHART_AXIS_PRIMARY_Y);
 }
 
 static void ui_create_settings_card(UI *_UI, lv_obj_t *_parent, lv_obj_t **_out,
@@ -1594,6 +1627,11 @@ static void keyboard_event_cb(lv_event_t *e) {
 void ui_set_time(UI *_UI, uint8_t h, uint8_t m, uint8_t s) {
   if (!_UI)
     return;
+
+  _UI->current_hour = h;
+  _UI->current_minute = m;
+  _UI->has_time = true;
+
   char clock[9];
   clock[0] = '0' + (h / 10);
   clock[1] = '0' + (h % 10);
@@ -1608,6 +1646,13 @@ void ui_set_time(UI *_UI, uint8_t h, uint8_t m, uint8_t s) {
   if (_UI->nav_clock_label) {
     lv_label_set_text(_UI->nav_clock_label, clock);
   }
+
+  if (_UI->energy_kwh_chart)
+    lv_obj_invalidate(_UI->energy_kwh_chart);
+  if (_UI->energy_cost_chart)
+    lv_obj_invalidate(_UI->energy_cost_chart);
+  if (_UI->energy_power_chart)
+    lv_obj_invalidate(_UI->energy_power_chart);
 }
 
 void ui_set_date(UI *_UI, uint16_t year, uint8_t month, uint8_t day) {
