@@ -55,6 +55,17 @@ extern "C" void app_main(void) {
     ESP_LOGE(TAG, "Failed to init wifi manager");
     return;
   }
+
+  bool missing_wifi = !wifi_handler_has_saved_config();
+  bool missing_facility = !facility_config_is_configured();
+  if (missing_wifi && missing_facility) {
+    display_handler_start_setup_wizard(true, true);
+  } else if (missing_wifi) {
+    display_handler_set_footer_text("Warning: Wifi config missing");
+  } else if (missing_facility) {
+    display_handler_set_footer_text("Warning: Facility config missing");
+  }
+
   static DashboardData dashboard_data;
   static UiStatus uistatus;
 }

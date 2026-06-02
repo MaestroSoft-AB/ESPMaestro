@@ -161,9 +161,6 @@ static void wifi_handler_event_manager(void *_arg, esp_event_base_t _event_base,
           (wifi_event_sta_disconnected_t *)_event_data;
 
       ESP_LOGW(TAG, "Disconnected, reason: %d", disc ? disc->reason : -1);
-      //
-      // wifi_handler_emit_status(false, s_wififi.current_ssid, NULL,
-      //                          "Disconnected");
 
       if (s_wifi.state == WIFI_HANDLER_STATE_SWITCHING) {
         wifi_handler_finish_connect();
@@ -171,6 +168,8 @@ static void wifi_handler_event_manager(void *_arg, esp_event_base_t _event_base,
       }
 
       if (s_wifi.user_disconnect) {
+        wifi_handler_emit_status(false, s_wifi.current_ssid, NULL,
+                                 "Disconnected");
         wifi_handler_set_state(WIFI_HANDLER_STATE_IDLE);
         break;
       }
@@ -185,9 +184,13 @@ static void wifi_handler_event_manager(void *_arg, esp_event_base_t _event_base,
         ESP_LOGI(TAG, "Reconnecting... attempt %d/%d", s_wifi.retry_count,
                  WIFI_MAX_RETRIES);
 
+        wifi_handler_emit_status(false, s_wifi.current_ssid, NULL,
+                                 "Reconnecting");
         wifi_handler_set_state(WIFI_HANDLER_STATE_CONNECTING);
         esp_wifi_connect();
       } else {
+        wifi_handler_emit_status(false, s_wifi.current_ssid, NULL,
+                                 "Disconnected");
         wifi_handler_set_state(WIFI_HANDLER_STATE_ERROR);
       }
 
@@ -207,8 +210,7 @@ static void wifi_handler_event_manager(void *_arg, esp_event_base_t _event_base,
       wifi_handler_set_state(WIFI_HANDLER_STATE_CONNECTED);
 
       ESP_LOGI(TAG, "Got IP: %s", ip_str);
-      // wifi_handler_emit_status(true, s_wifi.current_ssid, ip_str,
-      // "Connected");
+      wifi_handler_emit_status(true, s_wifi.current_ssid, ip_str, "Connected");
       break;
     }
     default:
@@ -323,9 +325,13 @@ esp_err_t wifi_handler_connect(const char *_ssid, const char *_password) {
   s_wifi.user_disconnect = false;
   s_wifi.retry_count = 0;
 
+  if (s_wifi.state == WIFI_HANDLER_STATE_IDLE) {
+    wifi_handler_set_state(WIFI_HANDLER_STATE_CONNECTING);
+    return wifi_handler_finish_connect();
+  }
+
   if (s_wifi.state == WIFI_HANDLER_STATE_CONNECTED ||
-      s_wifi.state == WIFI_HANDLER_STATE_CONNECTING ||
-      s_wifi.state == WIFI_HANDLER_STATE_IDLE) {
+      s_wifi.state == WIFI_HANDLER_STATE_CONNECTING) {
     wifi_handler_set_state(WIFI_HANDLER_STATE_SWITCHING);
 
     esp_err_t err = esp_wifi_disconnect();
@@ -345,6 +351,8 @@ esp_err_t wifi_handler_finish_connect(void) {
   esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &s_wifi.cfg);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_wifi_set_config failed: %s", esp_err_to_name(err));
+    wifi_handler_emit_status(false, s_wifi.current_ssid, NULL,
+                             "Failed to configure WiFi");
     wifi_handler_set_state(WIFI_HANDLER_STATE_ERROR);
     return err;
   }
@@ -353,6 +361,8 @@ esp_err_t wifi_handler_finish_connect(void) {
   err = esp_wifi_connect();
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
+    wifi_handler_emit_status(false, s_wifi.current_ssid, NULL,
+                             "Failed to start connection");
     wifi_handler_set_state(WIFI_HANDLER_STATE_ERROR);
   }
   return err;
@@ -364,8 +374,13 @@ esp_err_t wifi_handler_disconnect(void) {
 
   wifi_handler_set_state(WIFI_HANDLER_STATE_IDLE);
 
-  return esp_wifi_disconnect();
+  esp_err_t err = esp_wifi_disconnect();
+  return err == ESP_ERR_WIFI_NOT_CONNECT ? ESP_OK : err;
 }
 bool wifi_handler_is_connected(void) {
   return s_wifi.state == WIFI_HANDLER_STATE_CONNECTED;
+}
+
+bool wifi_handler_has_saved_config(void) {
+  return s_wifi.current_ssid[0] != '\0';
 }

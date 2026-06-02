@@ -1,5 +1,8 @@
 #pragma once
 #include "dashboard_types.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
 #include "scheduler.h"
 #include <stdint.h>
 
@@ -7,6 +10,7 @@ typedef enum {
   DBD_STATE_INIT,
   DBD_STATE_IDLE,
   DBD_STATE_REQUEST_DATA,
+  DBD_STATE_WAIT_RESPONSE,
   DBD_STATE_PARSE_DATA,
   DBD_STATE_UPDATE_GRAPHS
 } DashboardDataStatus;
@@ -25,6 +29,9 @@ public:
   bool need_realtimedata;
 
   Scheduler_Task *task;
+  TaskHandle_t fetch_task;
+  QueueHandle_t fetch_result_queue;
+  bool fetch_in_progress;
   uint64_t base_epoch;
   uint64_t base_ms;
   uint64_t next_fetch_ms;

@@ -53,6 +53,17 @@ static RealtimeData g_realtime;
 static bool g_dashboard_ready = false;
 static SemaphoreHandle_t g_dashboard_mutex = NULL;
 
+/*---------------------------Setup Wizard--------------------------------------*/
+static bool g_setup_ready = false;
+static bool g_setup_missing_wifi = false;
+static bool g_setup_missing_facility = false;
+static SemaphoreHandle_t g_setup_mutex = NULL;
+
+/*---------------------------Footer Messages-----------------------------------*/
+static bool g_footer_ready = false;
+static char g_footer_text[128] = {0};
+static SemaphoreHandle_t g_footer_mutex = NULL;
+
 /* -------------------------------PERF OVERLAY------------------------- */
 static lv_obj_t *g_perf_label = NULL;
 static uint32_t g_perf_frame_count = 0;
@@ -219,6 +230,30 @@ void display_handler_update_dashboard(const WeatherData *w,
   }
 }
 
+void display_handler_start_setup_wizard(bool missing_wifi,
+                                        bool missing_facility) {
+  if (!g_setup_mutex)
+    return;
+
+  if (xSemaphoreTake(g_setup_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    g_setup_missing_wifi = missing_wifi;
+    g_setup_missing_facility = missing_facility;
+    g_setup_ready = missing_wifi || missing_facility;
+    xSemaphoreGive(g_setup_mutex);
+  }
+}
+
+void display_handler_set_footer_text(const char *text) {
+  if (!g_footer_mutex || !text)
+    return;
+
+  if (xSemaphoreTake(g_footer_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    snprintf(g_footer_text, sizeof(g_footer_text), "%s", text);
+    g_footer_ready = true;
+    xSemaphoreGive(g_footer_mutex);
+  }
+}
+
 /*****************************************************************/
 static char *get_iso_time_string(void) {
   time_t epoch = time(NULL);
@@ -303,6 +338,18 @@ int display_handler_init(DH *_DH) {
     return -1;
   }
 
+  g_setup_mutex = xSemaphoreCreateMutex();
+  if (!g_setup_mutex) {
+    ESP_LOGE(TAG, "Failed to create setup mutex");
+    return -1;
+  }
+
+  g_footer_mutex = xSemaphoreCreateMutex();
+  if (!g_footer_mutex) {
+    ESP_LOGE(TAG, "Failed to create footer mutex");
+    return -1;
+  }
+
   return 0;
 }
 
@@ -327,6 +374,11 @@ void display_handler_work(void *_null_for_now) {
     bool need_time_update = false;
     bool need_date_update = false;
     bool need_dashboard_update = false;
+    bool need_setup_update = false;
+    bool setup_missing_wifi = false;
+    bool setup_missing_facility = false;
+    bool need_footer_update = false;
+    char footer_text[128] = {0};
 
     WeatherData w;
     ElectricityData e;
@@ -414,6 +466,34 @@ void display_handler_work(void *_null_for_now) {
 
       if (need_dashboard_update) {
         ui_set_dashboard_data(&g_ui, &w, &e, &r);
+      }
+
+      if (g_setup_mutex && xSemaphoreTake(g_setup_mutex, 0) == pdTRUE) {
+        if (g_setup_ready) {
+          setup_missing_wifi = g_setup_missing_wifi;
+          setup_missing_facility = g_setup_missing_facility;
+          g_setup_ready = false;
+          need_setup_update = true;
+        }
+        xSemaphoreGive(g_setup_mutex);
+      }
+
+      if (need_setup_update) {
+        ui_start_setup_wizard(&g_ui, setup_missing_wifi,
+                              setup_missing_facility);
+      }
+
+      if (g_footer_mutex && xSemaphoreTake(g_footer_mutex, 0) == pdTRUE) {
+        if (g_footer_ready) {
+          snprintf(footer_text, sizeof(footer_text), "%s", g_footer_text);
+          g_footer_ready = false;
+          need_footer_update = true;
+        }
+        xSemaphoreGive(g_footer_mutex);
+      }
+
+      if (need_footer_update) {
+        ui_set_footer_text(&g_ui, footer_text);
       }
 
       /* Perf overlay tick */

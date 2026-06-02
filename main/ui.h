@@ -80,17 +80,15 @@ typedef struct {
   lv_obj_t *wifi_page_label;
   lv_obj_t *wifi_password_overlay;
   lv_obj_t *wifi_password_panel;
+  lv_obj_t *wifi_show_password_cb;
   int wifi_network_page;
   int wifi_connecting_index;
 
   lv_obj_t *facility_form;
   lv_obj_t *facility_name_ta;
-  lv_obj_t *facility_address_ta;
   lv_obj_t *facility_lat_ta;
   lv_obj_t *facility_lon_ta;
   lv_obj_t *facility_energy_zone_ta;
-  lv_obj_t *facility_city_ta;
-  lv_obj_t *facility_zip_ta;
   lv_obj_t *facility_status_label;
   lv_obj_t *facility_save_btn;
   int facility_page;
@@ -104,6 +102,9 @@ typedef struct {
   UI_Screen current_screen;
   bool wifi_connecting;
   bool wifi_connected;
+  bool setup_wizard_active;
+  bool setup_missing_wifi;
+  bool setup_missing_facility;
   char wifi_status[128];
   char wifi_ssid[64];
   char wifi_ip[32];
@@ -140,6 +141,7 @@ void ui_set_wifi_network_list(UI *_UI, const char *_options);
 void ui_set_date(UI *_UI, uint16_t year, uint8_t month, uint8_t day);
 void ui_set_dashboard_data(UI *ui, const WeatherData *w,
                            const ElectricityData *e, const RealtimeData *r);
+void ui_start_setup_wizard(UI *_UI, bool missing_wifi, bool missing_facility);
 
 #ifdef __cplusplus
 }

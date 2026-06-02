@@ -60,6 +60,9 @@ void display_handler_update_date(uint16_t year, uint8_t month, uint8_t day);
 void display_handler_update_dashboard(const WeatherData *w,
                                       const ElectricityData *e,
                                       const RealtimeData *r);
+void display_handler_start_setup_wizard(bool missing_wifi,
+                                        bool missing_facility);
+void display_handler_set_footer_text(const char *text);
 // void dh_dispose(DH* _DH);
 
 /* ========================================================= */

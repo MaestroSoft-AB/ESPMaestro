@@ -140,6 +140,7 @@ esp_err_t wifi_handler_disconnect(void);
  * @return true if connected, false otherwise
  */
 bool wifi_handler_is_connected(void);
+bool wifi_handler_has_saved_config(void);
 #ifdef __cplusplus
 }
 #endif

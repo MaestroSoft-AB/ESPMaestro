@@ -2,6 +2,9 @@
 #include "display_handler.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
 #include "wifi_handler.h"
 #include "cJSON.h"
 #include <stdlib.h>
@@ -20,6 +23,9 @@ static const char *TAG = "DashboardData";
 #define OPTIMAESTRO_FETCH_RETRY_MS 15000
 #define OPTIMAESTRO_HTTP_TIMEOUT_MS 5000
 #define OPTIMAESTRO_HTTP_MAX_BODY 8192
+#define OPTIMAESTRO_HTTP_LOG_BODY_MAX 240
+#define OPTIMAESTRO_FETCH_TASK_STACK 8192
+#define OPTIMAESTRO_FETCH_TASK_PRIORITY 2
 
 typedef struct {
   char *data;
@@ -27,8 +33,22 @@ typedef struct {
   int capacity;
 } HttpBuffer;
 
+typedef struct {
+  bool success;
+  float current_sek_kwh;
+  float sek_24h[24];
+  uint32_t power_w;
+  uint32_t max_power_w_24h;
+  float current_kwh;
+  float current_sek_h;
+  uint32_t power_24h[24];
+  float kwh_24h[24];
+  float cost_24h[24];
+} DbdFetchResult;
+
 /*------------------------------------*/
 static void dbd_taskwork(void *_context, uint64_t _now);
+static void dbd_fetch_worker_task(void *_context);
 /*------------------------------------*/
 
 static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
@@ -64,9 +84,9 @@ static bool read_number_array_item(cJSON *array, int index, double *out) {
   return true;
 }
 
-static bool dbd_parse_optimaestro_display_json(DashboardData *self,
-                                               const char *json) {
-  if (self == NULL || json == NULL)
+static bool dbd_parse_optimaestro_display_json(const char *json,
+                                               DbdFetchResult *result) {
+  if (json == NULL || result == NULL)
     return false;
 
   cJSON *root = cJSON_Parse(json);
@@ -145,15 +165,27 @@ static bool dbd_parse_optimaestro_display_json(DashboardData *self,
       total_cost = (float)(cc->valuedouble / 100.0);
   }
 
-  self->update_electricity(sek_24h[23], sek_24h);
-  self->update_realtime(power_24h[23], max_power, total_kwh, total_cost,
-                        power_24h, kwh_24h, cost_24h);
+  result->success = true;
+  result->current_sek_kwh = sek_24h[23];
+  memcpy(result->sek_24h, sek_24h, sizeof(result->sek_24h));
+  result->power_w = power_24h[23];
+  result->max_power_w_24h = max_power;
+  result->current_kwh = total_kwh;
+  result->current_sek_h = total_cost;
+  memcpy(result->power_24h, power_24h, sizeof(result->power_24h));
+  memcpy(result->kwh_24h, kwh_24h, sizeof(result->kwh_24h));
+  memcpy(result->cost_24h, cost_24h, sizeof(result->cost_24h));
 
   cJSON_Delete(root);
   return true;
 }
 
-static bool dbd_fetch_optimaestro_display_json(DashboardData *self) {
+static bool dbd_fetch_optimaestro_display_json(DbdFetchResult *result) {
+  if (result == NULL)
+    return false;
+
+  memset(result, 0, sizeof(*result));
+
   char *response = (char *)calloc(1, OPTIMAESTRO_HTTP_MAX_BODY);
   if (response == NULL)
     return false;
@@ -178,16 +210,25 @@ static bool dbd_fetch_optimaestro_display_json(DashboardData *self) {
 
   esp_err_t err = esp_http_client_perform(client);
   int status = esp_http_client_get_status_code(client);
-  esp_http_client_cleanup(client);
 
   if (err != ESP_OK || status != 200 || buffer.len == 0) {
-    ESP_LOGW(TAG, "OptiMaestro fetch failed: err=%s status=%d",
-             esp_err_to_name(err), status);
+    ESP_LOGW(TAG, "OptiMaestro fetch failed: url=%s err=%s status=%d len=%d",
+             OPTIMAESTRO_DISPLAY_GRAPH_URL, esp_err_to_name(err), status,
+             buffer.len);
+    if (buffer.len > 0) {
+      int log_len = buffer.len < OPTIMAESTRO_HTTP_LOG_BODY_MAX
+                        ? buffer.len
+                        : OPTIMAESTRO_HTTP_LOG_BODY_MAX;
+      ESP_LOGW(TAG, "OptiMaestro response body: %.*s", log_len, response);
+    }
+    esp_http_client_cleanup(client);
     free(response);
     return false;
   }
 
-  bool parsed = dbd_parse_optimaestro_display_json(self, response);
+  esp_http_client_cleanup(client);
+
+  bool parsed = dbd_parse_optimaestro_display_json(response, result);
   if (!parsed)
     ESP_LOGW(TAG, "Failed to parse OptiMaestro display data");
 
@@ -199,11 +240,34 @@ static bool dbd_fetch_optimaestro_display_json(DashboardData *self) {
 
 DashboardData::DashboardData()
     : initialized_(false), state(DBD_STATE_IDLE), need_weaterdata(true),
-      need_electricitydata(true), need_realtimedata(true), base_epoch(0),
-      base_ms(0), next_fetch_ms(0) {
+      need_electricitydata(true), need_realtimedata(true), task(nullptr),
+      fetch_task(NULL), fetch_result_queue(NULL), fetch_in_progress(false),
+      base_epoch(0), base_ms(0), next_fetch_ms(0) {
+  fetch_result_queue = xQueueCreate(1, sizeof(DbdFetchResult));
+
+  if (fetch_result_queue == NULL) {
+    initialized_ = false;
+    return;
+  }
+
+  BaseType_t task_created =
+      xTaskCreate(dbd_fetch_worker_task, "dbd_http_fetch",
+                  OPTIMAESTRO_FETCH_TASK_STACK, this,
+                  OPTIMAESTRO_FETCH_TASK_PRIORITY, &fetch_task);
+  if (task_created != pdPASS) {
+    vQueueDelete(fetch_result_queue);
+    fetch_result_queue = NULL;
+    initialized_ = false;
+    return;
+  }
+
   task = scheduler_create_task(this, dbd_taskwork);
 
   if (task == nullptr) {
+    vTaskDelete(fetch_task);
+    vQueueDelete(fetch_result_queue);
+    fetch_task = NULL;
+    fetch_result_queue = NULL;
     initialized_ = false;
     return;
   }
@@ -263,11 +327,35 @@ DashboardData::~DashboardData() {
   if (initialized_) {
     scheduler_destroy_task(task);
   }
+  if (fetch_task != NULL) {
+    vTaskDelete(fetch_task);
+    fetch_task = NULL;
+  }
+  if (fetch_result_queue != NULL) {
+    vQueueDelete(fetch_result_queue);
+    fetch_result_queue = NULL;
+  }
 }
 
 /*-------------Taskwork*-------------*/
-static DashboardDataStatus dbd_fetch_data(DashboardData *self,
-                                          uint64_t now_ms) {
+static void dbd_fetch_worker_task(void *_context) {
+  DashboardData *self = static_cast<DashboardData *>(_context);
+  DbdFetchResult result = {};
+
+  while (1) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+    memset(&result, 0, sizeof(result));
+    result.success = dbd_fetch_optimaestro_display_json(&result);
+
+    if (self != NULL && self->fetch_result_queue != NULL) {
+      xQueueOverwrite(self->fetch_result_queue, &result);
+    }
+  }
+}
+
+static DashboardDataStatus dbd_start_fetch(DashboardData *self,
+                                           uint64_t now_ms) {
   if (!wifi_handler_is_connected()) {
     self->next_fetch_ms = now_ms + OPTIMAESTRO_FETCH_RETRY_MS;
     return DBD_STATE_IDLE;
@@ -277,10 +365,40 @@ static DashboardDataStatus dbd_fetch_data(DashboardData *self,
     // TODO: replace with OptiMaestro weather/current endpoint when available.
   }
 
-  if (!dbd_fetch_optimaestro_display_json(self)) {
+  if (self->fetch_in_progress) {
+    return DBD_STATE_WAIT_RESPONSE;
+  }
+
+  DbdFetchResult stale_result = {};
+  while (self->fetch_result_queue != NULL &&
+         xQueueReceive(self->fetch_result_queue, &stale_result, 0) == pdTRUE) {
+  }
+
+  self->fetch_in_progress = true;
+  xTaskNotifyGive(self->fetch_task);
+  return DBD_STATE_WAIT_RESPONSE;
+}
+
+static DashboardDataStatus dbd_wait_response(DashboardData *self,
+                                             uint64_t now_ms) {
+  DbdFetchResult result = {};
+
+  if (self->fetch_result_queue == NULL ||
+      xQueueReceive(self->fetch_result_queue, &result, 0) != pdTRUE) {
+    return DBD_STATE_WAIT_RESPONSE;
+  }
+
+  self->fetch_in_progress = false;
+
+  if (!result.success) {
     self->next_fetch_ms = now_ms + OPTIMAESTRO_FETCH_RETRY_MS;
     return DBD_STATE_IDLE;
   }
+
+  self->update_electricity(result.current_sek_kwh, result.sek_24h);
+  self->update_realtime(result.power_w, result.max_power_w_24h,
+                        result.current_kwh, result.current_sek_h,
+                        result.power_24h, result.kwh_24h, result.cost_24h);
 
   self->next_fetch_ms = now_ms + OPTIMAESTRO_FETCH_INTERVAL_MS;
   return DBD_STATE_UPDATE_GRAPHS;
@@ -315,7 +433,11 @@ static void dbd_taskwork(void *_context, uint64_t _now_ms) {
     break;
 
   case DBD_STATE_REQUEST_DATA:
-    self->state = dbd_fetch_data(self, _now_ms);
+    self->state = dbd_start_fetch(self, _now_ms);
+    break;
+
+  case DBD_STATE_WAIT_RESPONSE:
+    self->state = dbd_wait_response(self, _now_ms);
     break;
 
   case DBD_STATE_UPDATE_GRAPHS:
