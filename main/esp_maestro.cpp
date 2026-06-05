@@ -1,6 +1,7 @@
 /******************** ESPMaestro ********************/
 /* Copyright MaestroSoft Corp AB Inc LLC Unlimited. */
 
+#include "bme280.hpp"
 #include "dashboard_data.hpp"
 #include "display_handler.h"
 #include "esp_log.h"
@@ -16,6 +17,22 @@
 #include <string.h>
 
 static const char *TAG = "main";
+static void bme280_test_once() {
+  bme280 bme;
+
+  if (!bme.init()) {
+    ESP_LOGE("BME280_TEST", "I2C bus init failed");
+    return;
+  }
+
+  if (bme.checkDevice(0x77)) {
+    ESP_LOGI("BME280_TEST", "BME280 found at 0x77");
+  } else if (bme.checkDevice(0x76)) {
+    ESP_LOGI("BME280_TEST", "BME280 found at 0x76");
+  } else {
+    ESP_LOGE("BME280_TEST", "BME280 not found");
+  }
+}
 
 extern "C" void app_main(void) {
 
@@ -29,6 +46,7 @@ extern "C" void app_main(void) {
   ESP_ERROR_CHECK(err);
   facility_config_init();
 
+  bme280_test_once();
   /* Initialize display first */
 
   if (display_handler_init(NULL) != 0) {
