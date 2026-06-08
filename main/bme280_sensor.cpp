@@ -87,6 +87,16 @@ bool bme280::init_at_address(i2c_master_bus_handle_t bus, uint8_t address) {
     return false;
   }
 
+  res = bme280_set_sensor_mode(BME280_POWERMODE_NORMAL, &bosch_dev_);
+
+  if (res != BME280_OK) {
+    ESP_LOGE(TAG, "Failed to set BME280 normal mode: %d", res);
+    i2c_master_bus_rm_device(temp_dev);
+    dev_handle_ = nullptr;
+    address_ = 0;
+    return false;
+  }
+
   initialized_ = true;
   latest_ = {};
   return true;
@@ -110,9 +120,6 @@ bool bme280::read() {
   latest_.humidity_rh = data.humidity;
   latest_.pressure_hpa = data.pressure / 100.0f;
   latest_.updated_epoch = (uint32_t)time(nullptr);
-
-  ESP_LOGI(TAG, "T=%.2f C RH=%.2f %% P=%.2f hPa", latest_.temperature_c,
-           latest_.humidity_rh, latest_.pressure_hpa);
 
   return true;
 }

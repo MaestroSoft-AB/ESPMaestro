@@ -98,8 +98,8 @@ void UiStatus::sync_time_from_ntp(uint32_t epoch, uint64_t now_ms) {
 UiStatus::UiStatus()
     : state_(UI_STATUS_INIT), base_epoch_(0), base_ms_(0), next_clock_ms_(0),
       task_(nullptr), time_valid_(false), initialized_(true),
-      logged_state_(UI_STATUS_INIT), has_logged_state_(false), hour(0), minute(0),
-      second(0) {
+      logged_state_(UI_STATUS_INIT), has_logged_state_(false), hour(0),
+      minute(0), second(0) {
   task_ = scheduler_create_task(this, ui_status_taskwork);
   if (task_ == nullptr) {
     initialized_ = false;
