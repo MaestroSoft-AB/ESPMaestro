@@ -1,5 +1,6 @@
 #ifndef __UI_STATUS_HPP__
 #define __UI_STATUS_HPP__
+#include "bme280_sensor.hpp"
 #include "scheduler.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -9,6 +10,7 @@ typedef enum {
   UI_STATUS_WAIT_NTP,
   UI_STATUS_IDLE,
   UI_STATUS_UPDATE_CLOCK,
+  UI_STATUS_UPDATE_BME280
 } UIStatusState;
 
 class UiStatus {
@@ -30,8 +32,10 @@ public:
   uint16_t year;
   uint8_t month;
   uint8_t day;
+  bme280 *sensor;
+  uint64_t next_bme280_ms;
 
-  UiStatus();
+  UiStatus(class bme280 *sensor = nullptr);
 
   // Prohibit copy
   UiStatus(const UiStatus &) = delete;

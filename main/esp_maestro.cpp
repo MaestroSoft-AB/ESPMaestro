@@ -22,38 +22,7 @@ static const char *TAG = "main";
 #include "bme280_sensor.hpp"
 #include "i2c.h"
 static DH display_context = {};
-
-static void bme280_test_task(void *arg) {
-  DH *ctx = static_cast<DH *>(arg);
-
-  if (ctx == nullptr || ctx->i2c.bus == nullptr) {
-    ESP_LOGE("BME280_TEST", "Missing I2C bus");
-    vTaskDelete(NULL);
-    return;
-  }
-
-  bme280 sensor;
-
-  if (!sensor.init(ctx->i2c.bus)) {
-    ESP_LOGE("BME280_TEST", "Failed to init BME280");
-    vTaskDelete(NULL);
-    return;
-  }
-
-  while (true) {
-    if (sensor.read()) {
-      bme280_reading reading = {};
-
-      if (sensor.latest(&reading)) {
-        ESP_LOGI("BME280_TEST", "T=%.2f C | RH=%.2f %% | P=%.2f hPa",
-                 reading.temperature_c, reading.humidity_rh,
-                 reading.pressure_hpa);
-      }
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(2000));
-  }
-}
+static bme280 sensor;
 
 extern "C" void app_main(void) {
 
@@ -85,9 +54,10 @@ extern "C" void app_main(void) {
                     3, NULL) != pdPASS) {
       ESP_LOGE(TAG, "Failed to create display_handler_work task");
     }
-    if (xTaskCreate(bme280_test_task, "bme280_test_task", 4096,
-                    &display_context, 1, NULL) != pdPASS) {
-      ESP_LOGE(TAG, "Failed to create bme280_test_task");
+    if (!sensor.init(display_context.i2c.bus)) {
+      ESP_LOGE(TAG, "Failed to init BME280");
+    } else {
+      sensor.start_api_task(2000);
     }
   }
 

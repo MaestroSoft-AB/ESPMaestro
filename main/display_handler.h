@@ -44,6 +44,13 @@ typedef struct {
   uint8_t month;
   uint8_t day;
 } DH_date_status;
+
+typedef struct {
+  bool reading_ready;
+  float temp;
+  float humidity;
+  float hpa;
+} DH_bme280_reading;
 /*-----------Callbacks-----*/
 void on_wifi_status(bool _connected, const char *_ssid, const char *_ip,
                     const char *_message);
@@ -61,6 +68,7 @@ void display_handler_update_date(uint16_t year, uint8_t month, uint8_t day);
 void display_handler_update_dashboard(const WeatherData *w,
                                       const ElectricityData *e,
                                       const RealtimeData *r);
+void display_handler_update_bme280(float temp, float humidity, float hpa);
 void display_handler_start_setup_wizard(bool missing_wifi,
                                         bool missing_facility);
 void display_handler_set_footer_text(const char *text);
