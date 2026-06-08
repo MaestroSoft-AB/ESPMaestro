@@ -3,6 +3,8 @@
 #include "../components/bme280_driver/include/bme280.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdint.h>
 
 typedef struct {
@@ -20,6 +22,8 @@ public:
   bool init(i2c_master_bus_handle_t bus);
   bool read();
   bool latest(bme280_reading *out) const;
+  bool start_api_task(uint32_t interval_ms = 2000);
+  void stop_api_task();
 
 private:
   bool initialized_ = false;
@@ -28,6 +32,9 @@ private:
 
   struct bme280_dev bosch_dev_ = {};
   bme280_reading latest_ = {};
+
+  TaskHandle_t api_task_ = nullptr;
+  uint32_t api_interval_ms_ = 2000;
 
   bool init_at_address(i2c_master_bus_handle_t bus, uint8_t address);
 
@@ -38,4 +45,6 @@ private:
                                         void *intf_ptr);
 
   static void delay_us(uint32_t period, void *intf_ptr);
+
+  static void api_task_entry(void *arg);
 };

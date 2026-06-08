@@ -170,3 +170,48 @@ void bme280::delay_us(uint32_t period, void *intf_ptr) {
   (void)intf_ptr;
   esp_rom_delay_us(period);
 }
+
+bool bme280::start_api_task(uint32_t interval_ms) {
+  if (!initialized_) {
+    ESP_LOGE(TAG, "Cannot start BME280 api task before init");
+    return false;
+  }
+
+  if (api_task_ != nullptr) {
+    return true;
+  }
+
+  api_interval_ms_ = interval_ms;
+
+  BaseType_t ok = xTaskCreate(bme280::api_task_entry, "bme280_api_task", 4096,
+                              this, 1, &api_task_);
+
+  if (ok != pdPASS) {
+    ESP_LOGE(TAG, "Failed to create BME280 api task");
+    api_task_ = nullptr;
+    return false;
+  }
+
+  return true;
+}
+
+void bme280::stop_api_task() {
+  if (api_task_ != nullptr) {
+    vTaskDelete(api_task_);
+    api_task_ = nullptr;
+  }
+}
+
+void bme280::api_task_entry(void *arg) {
+  auto *self = static_cast<bme280 *>(arg);
+
+  if (self == nullptr) {
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  while (true) {
+    self->read();
+    vTaskDelay(pdMS_TO_TICKS(self->api_interval_ms_));
+  }
+}

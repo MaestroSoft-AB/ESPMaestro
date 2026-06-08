@@ -31,12 +31,6 @@ extern const lv_font_t notosans_14;
 static esp_lcd_panel_handle_t panel_handle = NULL;
 static esp_lcd_touch_handle_t tp_handle = NULL;
 
-/* Text buffers */
-static char screen_text[DISPLAY_MAX_CHAR_ROWS * DISPLAY_MAX_CHAR_PER_ROW] = {0};
-static char model_info[87] = {0};
-static char iso_string[20] = {0};
-static char mem_info[91] = {0};
-
 /* -------------------------------WIFI CALLBACKS----------------------- */
 static DH_wifi_status g_wifi_status = {0};
 static SemaphoreHandle_t g_wifi_status_mutex = NULL;
@@ -64,6 +58,9 @@ static RealtimeData g_realtime;
 static bool g_dashboard_ready = false;
 static SemaphoreHandle_t g_dashboard_mutex = NULL;
 
+static DH_bme280_reading g_bme280_reading = {0};
+static SemaphoreHandle_t g_bme280_reading_mutex = NULL;
+
 /*---------------------------Setup
  * Wizard--------------------------------------*/
 static bool g_setup_ready = false;
@@ -76,62 +73,6 @@ static SemaphoreHandle_t g_setup_mutex = NULL;
 static bool g_footer_ready = false;
 static char g_footer_text[128] = {0};
 static SemaphoreHandle_t g_footer_mutex = NULL;
-
-/* -------------------------------PERF OVERLAY------------------------- */
-static lv_obj_t *g_perf_label = NULL;
-static uint32_t g_perf_frame_count = 0;
-static uint32_t g_perf_last_report_ms = 0;
-
-static void perf_overlay_init(void) {
-  if (g_perf_label) {
-    return;
-  }
-
-  lv_obj_t *screen = lv_scr_act();
-  g_perf_label = lv_label_create(screen);
-
-  lv_obj_set_style_bg_opa(g_perf_label, LV_OPA_70, 0);
-  lv_obj_set_style_bg_color(g_perf_label, lv_color_black(), 0);
-  lv_obj_set_style_text_color(g_perf_label, lv_color_white(), 0);
-  lv_obj_set_style_border_width(g_perf_label, 0, 0);
-  lv_obj_set_style_shadow_width(g_perf_label, 0, 0);
-  lv_obj_set_style_outline_width(g_perf_label, 0, 0);
-  lv_obj_set_style_radius(g_perf_label, 4, 0);
-  lv_obj_set_style_pad_left(g_perf_label, 6, 0);
-  lv_obj_set_style_pad_right(g_perf_label, 6, 0);
-  lv_obj_set_style_pad_top(g_perf_label, 4, 0);
-  lv_obj_set_style_pad_bottom(g_perf_label, 4, 0);
-
-  lv_obj_align(g_perf_label, LV_ALIGN_TOP_RIGHT, -6, 6);
-  lv_label_set_text(g_perf_label, "FPS: --\nframe: -- ms\nheap: --");
-
-  g_perf_last_report_ms = lv_tick_get();
-  g_perf_frame_count = 0;
-}
-
-static void perf_overlay_tick(void) {
-  if (!g_perf_label) {
-    return;
-  }
-
-  g_perf_frame_count++;
-
-  uint32_t now = lv_tick_get();
-  uint32_t elapsed = now - g_perf_last_report_ms;
-
-  if (elapsed >= 1000) {
-    uint32_t fps = g_perf_frame_count;
-    uint32_t frame_ms = fps ? (1000U / fps) : 0;
-    size_t free_heap = esp_get_free_heap_size();
-
-    lv_label_set_text_fmt(g_perf_label, "FPS: %lu\nframe: %lu ms\nheap: %u",
-                          (unsigned long)fps, (unsigned long)frame_ms,
-                          (unsigned)free_heap);
-
-    g_perf_frame_count = 0;
-    g_perf_last_report_ms = now;
-  }
-}
 
 /* -------------------------------WIFI CALLBACKS----------------------- */
 void on_wifi_scan_done(const Wifi_Handler_ap *_aps, uint16_t _count) {
@@ -258,6 +199,20 @@ static esp_lcd_touch_handle_t display_handler_touch_init(DEV_I2C_Port *port) {
 }
 
 /******************************************************************/
+void display_handler_update_bme280(float temp, float humidity, float hpa) {
+  if (!g_indoor_climate_mutex)
+    return;
+
+  if (xSemaphoreTake(g_indoor_climate_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    g_indoor_climate_status.temperature_c = temp;
+    g_indoor_climate_status.pressure_hpa = hpa;
+    g_indoor_climate_status.humidity_rh = humidity;
+    g_indoor_climate_status.indoor_climate_ready = true;
+    xSemaphoreGive(g_indoor_climate_mutex);
+  }
+}
+
+/******************************************************************/
 
 void display_handler_update_time(uint8_t h, uint8_t m, uint8_t s) {
   if (!g_time_status_mutex)
@@ -282,21 +237,6 @@ void display_handler_update_date(uint16_t year, uint8_t month, uint8_t day) {
     g_date_status.day = day;
     g_date_status.date_ready = true;
     xSemaphoreGive(g_date_status_mutex);
-  }
-}
-
-void display_handler_update_indoor_climate(float temperature_c,
-                                           float pressure_hpa,
-                                           float humidity_rh) {
-  if (!g_indoor_climate_mutex)
-    return;
-
-  if (xSemaphoreTake(g_indoor_climate_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-    g_indoor_climate_status.temperature_c = temperature_c;
-    g_indoor_climate_status.pressure_hpa = pressure_hpa;
-    g_indoor_climate_status.humidity_rh = humidity_rh;
-    g_indoor_climate_status.indoor_climate_ready = true;
-    xSemaphoreGive(g_indoor_climate_mutex);
   }
 }
 
@@ -356,31 +296,6 @@ void display_handler_set_footer_text(const char *text) {
 }
 
 /*****************************************************************/
-static char *get_iso_time_string(void) {
-  time_t epoch = time(NULL);
-  struct tm *tm = gmtime(&epoch);
-  if (tm) {
-    int year = tm->tm_year + 1900;
-    int month = tm->tm_mon + 1;
-    int day = tm->tm_mday;
-    int hour = tm->tm_hour;
-    int min = tm->tm_min;
-    int sec = tm->tm_sec;
-
-    if (snprintf(iso_string, sizeof(iso_string),
-                 "%04d-%02d-%02dT%02d:%02d:%02d", year, month, day, hour, min,
-                 sec) < 0) {
-      ESP_LOGW(TAG, "Failed to parse current time");
-      memset(iso_string, 0, sizeof(iso_string));
-      snprintf(iso_string, sizeof(iso_string), "N/A");
-    }
-  } else {
-    ESP_LOGW(TAG, "Failed to create tm struct from epoch");
-    snprintf(iso_string, sizeof(iso_string), "N/A");
-  }
-
-  return iso_string;
-}
 
 void display_handler_wifi_status(bool connected, const char *ssid,
                                  const char *ip) {
@@ -465,6 +380,12 @@ int display_handler_init(DH *_DH) {
   g_footer_mutex = xSemaphoreCreateMutex();
   if (!g_footer_mutex) {
     ESP_LOGE(TAG, "Failed to create footer mutex");
+    return -1;
+  }
+
+  g_bme280_reading_mutex = xSemaphoreCreateMutex();
+  if (!g_bme280_reading_mutex) {
+    ESP_LOGE(TAG, "Failed to create bme280 reaing mutex");
     return -1;
   }
 
@@ -594,7 +515,8 @@ void display_handler_work(void *_null_for_now) {
                               indoor_humidity_rh);
       }
 
-      if (g_live_power_mutex && xSemaphoreTake(g_live_power_mutex, 0) == pdTRUE) {
+      if (g_live_power_mutex &&
+          xSemaphoreTake(g_live_power_mutex, 0) == pdTRUE) {
         if (g_live_power_status.ready) {
           live_power_w = g_live_power_status.power_w;
           g_live_power_status.ready = false;

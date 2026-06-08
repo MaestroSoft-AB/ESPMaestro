@@ -7,8 +7,8 @@ extern "C" {
 #include "dashboard_data.hpp"
 #include "display_handler.h"
 #include "driver/i2c_master.h"
-#include "esp_log.h"
 #include "esp_http_client.h"
+#include "esp_log.h"
 #include "facility_config.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/projdefs.h"
@@ -25,9 +25,10 @@ static const char *TAG = "main";
 #include "bme280_sensor.hpp"
 #include "i2c.h"
 static DH display_context = {};
+<<<<<<< HEAD
 
 #ifndef OPTIMAESTRO_DISPLAY_CURRENT_URL
-#define OPTIMAESTRO_DISPLAY_CURRENT_URL                                          \
+#define OPTIMAESTRO_DISPLAY_CURRENT_URL                                        \
   "http://135.225.131.246:10580/api/v1/display/current"
 #endif
 
@@ -123,15 +124,15 @@ static void bme280_test_task(void *arg) {
         ESP_LOGI("BME280_TEST", "T=%.2f C | RH=%.2f %% | P=%.2f hPa",
                  reading.temperature_c, reading.humidity_rh,
                  reading.pressure_hpa);
-        display_handler_update_indoor_climate(reading.temperature_c,
-                                              reading.pressure_hpa,
-                                              reading.humidity_rh);
+        display_handler_update_indoor_climate(
+            reading.temperature_c, reading.pressure_hpa, reading.humidity_rh);
       }
     }
 
     vTaskDelay(pdMS_TO_TICKS(2000));
   }
 }
+static bme280 sensor;
 
 static void live_power_task(void *arg) {
   (void)arg;
@@ -176,12 +177,13 @@ extern "C" void app_main(void) {
                     3, NULL) != pdPASS) {
       ESP_LOGE(TAG, "Failed to create display_handler_work task");
     }
-    if (xTaskCreate(bme280_test_task, "bme280_test_task", 4096,
-                    &display_context, 1, NULL) != pdPASS) {
-      ESP_LOGE(TAG, "Failed to create bme280_test_task");
+    if (!sensor.init(display_context.i2c.bus)) {
+      ESP_LOGE(TAG, "Failed to init BME280");
+    } else {
+      sensor.start_api_task(2000);
     }
-    if (xTaskCreate(live_power_task, "live_power_task", 6144, NULL, 1,
-                    NULL) != pdPASS) {
+    if (xTaskCreate(live_power_task, "live_power_task", 6144, NULL, 1, NULL) !=
+        pdPASS) {
       ESP_LOGE(TAG, "Failed to create live_power_task");
     }
   }
