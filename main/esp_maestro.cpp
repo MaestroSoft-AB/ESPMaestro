@@ -1,9 +1,12 @@
 /******************** ESPMaestro ********************/
 /* Copyright MaestroSoft Corp AB Inc LLC Unlimited. */
-
-#include "bme280.hpp"
+#include "bme280_sensor.hpp"
+extern "C" {
+#include "i2c.h"
+}
 #include "dashboard_data.hpp"
 #include "display_handler.h"
+#include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "facility_config.h"
 #include "freertos/FreeRTOS.h"
@@ -13,24 +16,42 @@
 #include "scheduler.h"
 #include "ui_status.hpp"
 #include "wifi_handler.h"
-#include <stdio.h>
-#include <string.h>
 
 static const char *TAG = "main";
-static void bme280_test_once() {
-  bme280 bme;
 
-  if (!bme.init()) {
-    ESP_LOGE("BME280_TEST", "I2C bus init failed");
+#include "bme280_sensor.hpp"
+#include "i2c.h"
+static DH display_context = {};
+
+static void bme280_test_task(void *arg) {
+  DH *ctx = static_cast<DH *>(arg);
+
+  if (ctx == nullptr || ctx->i2c.bus == nullptr) {
+    ESP_LOGE("BME280_TEST", "Missing I2C bus");
+    vTaskDelete(NULL);
     return;
   }
 
-  if (bme.checkDevice(0x77)) {
-    ESP_LOGI("BME280_TEST", "BME280 found at 0x77");
-  } else if (bme.checkDevice(0x76)) {
-    ESP_LOGI("BME280_TEST", "BME280 found at 0x76");
-  } else {
-    ESP_LOGE("BME280_TEST", "BME280 not found");
+  bme280 sensor;
+
+  if (!sensor.init(ctx->i2c.bus)) {
+    ESP_LOGE("BME280_TEST", "Failed to init BME280");
+    vTaskDelete(NULL);
+    return;
+  }
+
+  while (true) {
+    if (sensor.read()) {
+      bme280_reading reading = {};
+
+      if (sensor.latest(&reading)) {
+        ESP_LOGI("BME280_TEST", "T=%.2f C | RH=%.2f %% | P=%.2f hPa",
+                 reading.temperature_c, reading.humidity_rh,
+                 reading.pressure_hpa);
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(2000));
   }
 }
 
@@ -46,10 +67,16 @@ extern "C" void app_main(void) {
   ESP_ERROR_CHECK(err);
   facility_config_init();
 
-  bme280_test_once();
   /* Initialize display first */
 
-  if (display_handler_init(NULL) != 0) {
+  display_context.i2c = DEV_I2C_Init();
+
+  if (display_context.i2c.bus == NULL) {
+    ESP_LOGE(TAG, "Failed to init shared I2C bus");
+    return;
+  }
+
+  if (display_handler_init(&display_context) != 0) {
     ESP_LOGE(TAG, "Failed to init display_handler");
   } else {
 
@@ -57,6 +84,10 @@ extern "C" void app_main(void) {
     if (xTaskCreate(display_handler_work, "display_handler_work", 12288, NULL,
                     3, NULL) != pdPASS) {
       ESP_LOGE(TAG, "Failed to create display_handler_work task");
+    }
+    if (xTaskCreate(bme280_test_task, "bme280_test_task", 4096,
+                    &display_context, 1, NULL) != pdPASS) {
+      ESP_LOGE(TAG, "Failed to create bme280_test_task");
     }
   }
 

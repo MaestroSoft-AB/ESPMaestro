@@ -10,13 +10,14 @@
 /* Lazy calc on 14px mono font on 1024x600 display */
 #define DISPLAY_MAX_CHAR_PER_ROW 73
 #define DISPLAY_MAX_CHAR_ROWS 42
+#include "i2c.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct {
-
+  DEV_I2C_Port i2c;
 } DH;
 
 typedef struct {

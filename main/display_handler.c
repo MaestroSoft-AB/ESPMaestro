@@ -2,25 +2,27 @@
 /* Copyright MaestroSoft Corp AB Inc LLC Unlimited. */
 
 #include "display_handler.h"
-#include "esp_chip_info.h"
+#include "esp_lcd_panel_io.h"
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
 #include "freertos/projdefs.h"
 #include "freertos/task.h"
+#include "gpio.h"
 #include "gt911.h"
+#include "i2c.h"
+#include "io_extension.h"
 #include "lvgl_port.h"
 #include "misc/lv_color.h"
 #include "rgb_lcd_port.h"
-#include "text_contents.h"
 #include "ui.h"
 #include "widgets/lv_label.h"
 #include "wifi_handler.h"
-
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
 /* --------------------------------------------------------------- */
+static DH g_dh = {0};
+static esp_lcd_panel_io_handle_t touch_io_handle = NULL;
 static UI g_ui;
 static const char *TAG = "display_handler";
 
@@ -53,13 +55,15 @@ static RealtimeData g_realtime;
 static bool g_dashboard_ready = false;
 static SemaphoreHandle_t g_dashboard_mutex = NULL;
 
-/*---------------------------Setup Wizard--------------------------------------*/
+/*---------------------------Setup
+ * Wizard--------------------------------------*/
 static bool g_setup_ready = false;
 static bool g_setup_missing_wifi = false;
 static bool g_setup_missing_facility = false;
 static SemaphoreHandle_t g_setup_mutex = NULL;
 
-/*---------------------------Footer Messages-----------------------------------*/
+/*---------------------------Footer
+ * Messages-----------------------------------*/
 static bool g_footer_ready = false;
 static char g_footer_text[128] = {0};
 static SemaphoreHandle_t g_footer_mutex = NULL;
@@ -182,6 +186,68 @@ void on_wifi_status(bool _connected, const char *_ssid, const char *_ip,
   xSemaphoreGive(g_wifi_status_mutex);
 }
 
+/****************************TOUCH*********************************/
+static esp_lcd_touch_handle_t display_handler_touch_init(DEV_I2C_Port *port) {
+  if (port == NULL || port->bus == NULL) {
+    ESP_LOGE(TAG, "Missing I2C bus for touch init");
+    return NULL;
+  }
+
+  esp_lcd_panel_io_i2c_config_t tp_io_config =
+      ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
+
+  IO_EXTENSION_Init();
+  DEV_GPIO_Mode(EXAMPLE_PIN_NUM_TOUCH_INT, GPIO_MODE_INPUT_OUTPUT);
+  IO_EXTENSION_Output(IO_EXTENSION_IO_1, 0);
+
+  vTaskDelay(pdMS_TO_TICKS(100));
+  DEV_Digital_Write(EXAMPLE_PIN_NUM_TOUCH_INT, 0);
+
+  vTaskDelay(pdMS_TO_TICKS(100));
+  IO_EXTENSION_Output(IO_EXTENSION_IO_1, 1);
+
+  vTaskDelay(pdMS_TO_TICKS(200));
+
+  ESP_LOGI(TAG, "Initialize GT911 I2C panel IO using shared bus");
+
+  esp_err_t err =
+      esp_lcd_new_panel_io_i2c(port->bus, &tp_io_config, &touch_io_handle);
+
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "esp_lcd_new_panel_io_i2c failed: %s", esp_err_to_name(err));
+    return NULL;
+  }
+
+  esp_lcd_touch_config_t tp_cfg = {
+      .x_max = DISPLAY_SIZE_WIDTH,
+      .y_max = DISPLAY_SIZE_HEIGHT,
+      .rst_gpio_num = EXAMPLE_PIN_NUM_TOUCH_RST,
+      .int_gpio_num = EXAMPLE_PIN_NUM_TOUCH_INT,
+      .levels =
+          {
+              .reset = 0,
+              .interrupt = 0,
+          },
+      .flags =
+          {
+              .swap_xy = 0,
+              .mirror_x = 0,
+              .mirror_y = 0,
+          },
+  };
+
+  esp_lcd_touch_handle_t touch = NULL;
+
+  err = esp_lcd_touch_new_i2c_gt911(touch_io_handle, &tp_cfg, &touch);
+
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "esp_lcd_touch_new_i2c_gt911 failed: %s",
+             esp_err_to_name(err));
+    return NULL;
+  }
+  return touch;
+}
+
 /******************************************************************/
 
 void display_handler_update_time(uint8_t h, uint8_t m, uint8_t s) {
@@ -290,9 +356,14 @@ void display_handler_wifi_status(bool connected, const char *ssid,
 }
 
 int display_handler_init(DH *_DH) {
-  (void)_DH;
+  if (_DH == NULL || _DH->i2c.bus == NULL) {
+    ESP_LOGE(TAG, "display_handler_init missing shared I2C bus");
+    return -1;
+  }
 
-  tp_handle = touch_gt911_init();
+  g_dh = *_DH;
+
+  tp_handle = display_handler_touch_init(&g_dh.i2c);
   if (tp_handle == NULL) {
     ESP_LOGE(TAG, "Failed to initialize GT911 touch controller");
     return -1;
