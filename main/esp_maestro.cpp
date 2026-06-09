@@ -57,41 +57,38 @@ extern "C" void app_main(void) {
                     3, NULL) != pdPASS) {
       ESP_LOGE(TAG, "Failed to create display_handler_work task");
     }
-    if (!sensor.init(display_context.i2c.bus)) {
-      ESP_LOGE(TAG, "Failed to init BME280");
+
+    sensor.start(display_context.i2c.bus, 2000);
+
+    if (scheduler_init() != 0) {
+      ESP_LOGE(TAG, "Failed to init scheduler");
     } else {
-      sensor.start_api_task(2000);
+      if (xTaskCreate(scheduler_task, "scheduler_task", 4096, NULL, 1, NULL) !=
+          pdPASS) {
+        ESP_LOGE(TAG, "Failed to create scheduler_task");
+      }
     }
-  }
 
-  if (scheduler_init() != 0) {
-    ESP_LOGE(TAG, "Failed to init scheduler");
-  } else {
-    if (xTaskCreate(scheduler_task, "scheduler_task", 4096, NULL, 1, NULL) !=
-        pdPASS) {
-      ESP_LOGE(TAG, "Failed to create scheduler_task");
+    if (wifi_handler_init(on_wifi_scan_done, on_wifi_status) != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to init wifi manager");
+      return;
     }
+
+    cli_init();
+
+    bool missing_wifi = !wifi_handler_has_saved_config();
+    bool missing_facility = !facility_config_is_configured();
+    if (missing_wifi && missing_facility) {
+      display_handler_start_setup_wizard(true, true);
+    } else if (missing_wifi) {
+      display_handler_set_footer_text("Warning: Wifi config missing");
+    } else if (missing_facility) {
+      display_handler_set_footer_text("Warning: Facility config missing");
+    }
+
+    static DashboardData dashboard_data;
+    static UiStatus uistatus(&sensor);
   }
-
-  if (wifi_handler_init(on_wifi_scan_done, on_wifi_status) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to init wifi manager");
-    return;
-  }
-
-  cli_init();
-
-  bool missing_wifi = !wifi_handler_has_saved_config();
-  bool missing_facility = !facility_config_is_configured();
-  if (missing_wifi && missing_facility) {
-    display_handler_start_setup_wizard(true, true);
-  } else if (missing_wifi) {
-    display_handler_set_footer_text("Warning: Wifi config missing");
-  } else if (missing_facility) {
-    display_handler_set_footer_text("Warning: Facility config missing");
-  }
-
-  static DashboardData dashboard_data;
-  static UiStatus uistatus;
 }
 
 /*
