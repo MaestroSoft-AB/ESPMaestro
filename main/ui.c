@@ -375,6 +375,8 @@ static void ui_style_chart(lv_obj_t *chart) {
 
 static void ui_configure_energy_chart(UI *ui, lv_obj_t *chart) {
   ui_style_chart(chart);
+  lv_obj_set_style_pad_left(chart, 10, LV_PART_TICKS);
+  lv_obj_set_style_pad_bottom(chart, 8, LV_PART_TICKS);
   lv_chart_set_point_count(chart, ui_energy_point_count(ui));
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 4, 2,
                          ui_energy_tick_count(ui), 1, true, 42);
@@ -388,7 +390,7 @@ static lv_obj_t *ui_create_range_button(lv_obj_t *parent, const char *text,
   lv_obj_t *btn = ui_create_button(parent, text, lv_color_hex(C_CARD));
   lv_obj_set_size(btn, 56, 32);
   lv_obj_set_user_data(btn, (void *)(uintptr_t)range);
-  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, ui);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_PRESSED, ui);
   return btn;
 }
 
@@ -640,7 +642,7 @@ static void ui_show_forecast_detail(UI *ui, uint32_t hour) {
       ui_create_button(panel, LV_SYMBOL_CLOSE, lv_color_hex(C_CARD));
   lv_obj_set_size(close, 36, 36);
   lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, 0);
-  lv_obj_add_event_cb(close, forecast_detail_close_event_cb, LV_EVENT_CLICKED,
+  lv_obj_add_event_cb(close, forecast_detail_close_event_cb, LV_EVENT_PRESSED,
                       ui);
 
   lv_obj_t *primary_label =
@@ -689,7 +691,7 @@ static void ui_show_forecast_detail(UI *ui, uint32_t hour) {
   lv_obj_set_size(ui->forecast_detail_prev_btn, 42, 36);
   lv_obj_align(ui->forecast_detail_prev_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
   lv_obj_add_event_cb(ui->forecast_detail_prev_btn,
-                      forecast_detail_page_event_cb, LV_EVENT_CLICKED, ui);
+                      forecast_detail_page_event_cb, LV_EVENT_PRESSED, ui);
   lv_obj_set_user_data(ui->forecast_detail_prev_btn, (void *)(uintptr_t)0);
 
   ui->forecast_detail_next_btn =
@@ -697,7 +699,7 @@ static void ui_show_forecast_detail(UI *ui, uint32_t hour) {
   lv_obj_set_size(ui->forecast_detail_next_btn, 42, 36);
   lv_obj_align(ui->forecast_detail_next_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
   lv_obj_add_event_cb(ui->forecast_detail_next_btn,
-                      forecast_detail_page_event_cb, LV_EVENT_CLICKED, ui);
+                      forecast_detail_page_event_cb, LV_EVENT_PRESSED, ui);
   lv_obj_set_user_data(ui->forecast_detail_next_btn, (void *)(uintptr_t)1);
 
   ui->forecast_detail_page_label =
@@ -816,7 +818,7 @@ static void ui_show_energy_detail(UI *ui, UI_EnergyDetailKind kind,
       ui_create_button(panel, LV_SYMBOL_CLOSE, lv_color_hex(C_CARD));
   lv_obj_set_size(close, 36, 36);
   lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, 0);
-  lv_obj_add_event_cb(close, energy_detail_close_event_cb, LV_EVENT_CLICKED,
+  lv_obj_add_event_cb(close, energy_detail_close_event_cb, LV_EVENT_PRESSED,
                       ui);
 
   lv_obj_t *info = ui_create_button(panel, "i", lv_color_hex(C_CARD));
@@ -870,7 +872,7 @@ static void ui_show_energy_detail(UI *ui, UI_EnergyDetailKind kind,
   lv_obj_align(info_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
   lv_obj_set_user_data(info, info_box);
-  lv_obj_add_event_cb(info, energy_detail_info_event_cb, LV_EVENT_CLICKED, ui);
+  lv_obj_add_event_cb(info, energy_detail_info_event_cb, LV_EVENT_PRESSED, ui);
 }
 
 static void ui_set_line_chart_u32(lv_obj_t *chart, lv_chart_series_t *ser,
@@ -903,17 +905,6 @@ static void ui_update_energy_range_view(UI *ui) {
     if (!objs[i])
       continue;
     lv_obj_clear_flag(objs[i], LV_OBJ_FLAG_HIDDEN);
-  }
-
-  if (ui->energy_range_notice_label) {
-    const char *caption = "Showing 24h profile";
-    if (ui->energy_range == UI_RANGE_7D) {
-      caption = "Showing 7-day historical profile";
-    } else if (ui->energy_range == UI_RANGE_30D) {
-      caption = "Showing 30-day historical profile";
-    }
-    lv_label_set_text(ui->energy_range_notice_label, caption);
-    lv_obj_clear_flag(ui->energy_range_notice_label, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -1176,7 +1167,7 @@ static lv_obj_t *ui_create_nav_button(lv_obj_t *_parent, const char *_text,
   lv_obj_set_style_border_width(btn, 1, 0);
   lv_obj_set_style_border_color(btn, lv_color_hex(C_BORDER), 0);
   lv_obj_set_style_bg_color(btn, lv_color_hex(C_CARD), 0);
-  lv_obj_add_event_cb(btn, nav_event_cb, LV_EVENT_CLICKED, _UI);
+  lv_obj_add_event_cb(btn, nav_event_cb, LV_EVENT_PRESSED, _UI);
   lv_obj_set_user_data(btn, (void *)(uintptr_t)_screen);
   lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLL_CHAIN);
@@ -1690,14 +1681,14 @@ static void ui_build_screen_forecast(UI *_UI) {
   lv_obj_set_size(_UI->forecast_table_btn, 86, 38);
   lv_obj_align(_UI->forecast_table_btn, LV_ALIGN_BOTTOM_RIGHT, -96, 0);
   lv_obj_add_event_cb(_UI->forecast_table_btn, view_toggle_event_cb,
-                      LV_EVENT_CLICKED, _UI);
+                      LV_EVENT_PRESSED, _UI);
 
   _UI->forecast_graph_btn =
       ui_create_button(panel, "Graph", lv_color_hex(C_BLUE));
   lv_obj_set_size(_UI->forecast_graph_btn, 86, 38);
   lv_obj_align(_UI->forecast_graph_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
   lv_obj_add_event_cb(_UI->forecast_graph_btn, view_toggle_event_cb,
-                      LV_EVENT_CLICKED, _UI);
+                      LV_EVENT_PRESSED, _UI);
   lv_obj_t *forecast_view_box = lv_obj_create(panel);
   lv_obj_set_size(forecast_view_box, LV_PCT(100), 292);
   lv_obj_align(forecast_view_box, LV_ALIGN_TOP_LEFT, 0, 62);
@@ -1765,7 +1756,7 @@ static void ui_build_screen_forecast(UI *_UI) {
   lv_obj_set_size(_UI->forecast_table_prev_btn, 44, 40);
   lv_obj_align(_UI->forecast_table_prev_btn, LV_ALIGN_TOP_RIGHT, 0, 24);
   lv_obj_add_event_cb(_UI->forecast_table_prev_btn,
-                      forecast_table_page_event_cb, LV_EVENT_CLICKED, _UI);
+                      forecast_table_page_event_cb, LV_EVENT_PRESSED, _UI);
   lv_obj_set_user_data(_UI->forecast_table_prev_btn, (void *)(uintptr_t)0);
   lv_obj_add_flag(_UI->forecast_table_prev_btn, LV_OBJ_FLAG_HIDDEN);
 
@@ -1774,7 +1765,7 @@ static void ui_build_screen_forecast(UI *_UI) {
   lv_obj_set_size(_UI->forecast_table_next_btn, 44, 40);
   lv_obj_align(_UI->forecast_table_next_btn, LV_ALIGN_BOTTOM_RIGHT, 0, -24);
   lv_obj_add_event_cb(_UI->forecast_table_next_btn,
-                      forecast_table_page_event_cb, LV_EVENT_CLICKED, _UI);
+                      forecast_table_page_event_cb, LV_EVENT_PRESSED, _UI);
   lv_obj_set_user_data(_UI->forecast_table_next_btn, (void *)(uintptr_t)1);
   lv_obj_add_flag(_UI->forecast_table_next_btn, LV_OBJ_FLAG_HIDDEN);
 
@@ -1809,14 +1800,14 @@ static void ui_build_screen_elpriser(UI *_UI) {
 
   _UI->energy_range_btn_row = lv_obj_create(panel);
   lv_obj_set_size(_UI->energy_range_btn_row, 188, 32);
-  lv_obj_align(_UI->energy_range_btn_row, LV_ALIGN_TOP_RIGHT, 0, 58);
+  lv_obj_align(_UI->energy_range_btn_row, LV_ALIGN_TOP_MID, 0, 0);
   lv_obj_set_style_bg_opa(_UI->energy_range_btn_row, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(_UI->energy_range_btn_row, 0, 0);
   lv_obj_set_style_pad_all(_UI->energy_range_btn_row, 0, 0);
   lv_obj_set_style_pad_column(_UI->energy_range_btn_row, 10, 0);
   lv_obj_set_layout(_UI->energy_range_btn_row, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(_UI->energy_range_btn_row, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(_UI->energy_range_btn_row, LV_FLEX_ALIGN_END,
+  lv_obj_set_flex_align(_UI->energy_range_btn_row, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_clear_flag(_UI->energy_range_btn_row, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -1886,12 +1877,7 @@ static void ui_build_screen_elpriser(UI *_UI) {
   lv_obj_add_event_cb(_UI->energy_power_chart, energy_chart_event_cb,
                       LV_EVENT_VALUE_CHANGED, _UI);
 
-  _UI->energy_range_notice_label =
-      ui_create_label(panel, "", lv_color_hex(C_MUTED));
-  lv_obj_set_width(_UI->energy_range_notice_label, LV_PCT(100));
-  lv_label_set_long_mode(_UI->energy_range_notice_label, LV_LABEL_LONG_WRAP);
-  lv_obj_align(_UI->energy_range_notice_label, LV_ALIGN_CENTER, 0, 20);
-  lv_obj_add_flag(_UI->energy_range_notice_label, LV_OBJ_FLAG_HIDDEN);
+  _UI->energy_range_notice_label = NULL;
   ui_update_energy_range_view(_UI);
 }
 
@@ -1905,7 +1891,7 @@ static void ui_create_settings_card(UI *_UI, lv_obj_t *_parent, lv_obj_t **_out,
   lv_obj_set_style_border_width(*_out, 1, 0);
   lv_obj_set_style_radius(*_out, 10, 0);
   lv_obj_set_style_shadow_width(*_out, 0, 0);
-  lv_obj_add_event_cb(*_out, settings_card_event_cb, LV_EVENT_CLICKED, _UI);
+  lv_obj_add_event_cb(*_out, settings_card_event_cb, LV_EVENT_PRESSED, _UI);
   lv_obj_t *accent = lv_obj_create(*_out);
   lv_obj_set_size(accent, 54, 54);
   lv_obj_align(accent, LV_ALIGN_LEFT_MID, 8, 0);
@@ -1967,7 +1953,7 @@ static void ui_build_screen_wifi(UI *_UI) {
       ui_create_button(panel, LV_SYMBOL_LEFT, lv_color_hex(0x374151));
   lv_obj_set_size(_UI->back_btn, 48, 48);
   lv_obj_align(_UI->back_btn, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_add_event_cb(_UI->back_btn, back_event_cb, LV_EVENT_CLICKED, _UI);
+  lv_obj_add_event_cb(_UI->back_btn, back_event_cb, LV_EVENT_PRESSED, _UI);
   lv_obj_t *title = ui_create_label(
       panel, _UI->setup_wizard_active ? "Setup: WiFi" : "WiFi Configuration",
       lv_color_white());
@@ -2000,7 +1986,7 @@ static void ui_build_screen_wifi(UI *_UI) {
   lv_obj_set_size(_UI->wifi_scan_btn, 100, 36);
   lv_obj_align(_UI->wifi_scan_btn, LV_ALIGN_TOP_RIGHT, 0, 128);
   lv_obj_add_event_cb(_UI->wifi_scan_btn, wifi_scan_btn_event_cb,
-                      LV_EVENT_CLICKED, _UI);
+                      LV_EVENT_PRESSED, _UI);
   lv_obj_t *list = lv_obj_create(panel);
   lv_obj_set_size(list, LV_PCT(100), 150);
   lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, 174);
@@ -2020,7 +2006,7 @@ static void ui_build_screen_wifi(UI *_UI) {
     lv_obj_set_style_shadow_width(_UI->wifi_network_rows[i], 0, 0);
     lv_obj_set_user_data(_UI->wifi_network_rows[i], (void *)(uintptr_t)i);
     lv_obj_add_event_cb(_UI->wifi_network_rows[i], wifi_network_row_event_cb,
-                        LV_EVENT_CLICKED, _UI);
+                        LV_EVENT_PRESSED, _UI);
     _UI->wifi_network_labels[i] =
         ui_create_label(_UI->wifi_network_rows[i], "Scan for networks...",
                         lv_color_hex(C_MUTED));
@@ -2030,14 +2016,14 @@ static void ui_build_screen_wifi(UI *_UI) {
   lv_obj_set_size(_UI->wifi_prev_btn, 76, 34);
   lv_obj_align(_UI->wifi_prev_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
   lv_obj_add_event_cb(_UI->wifi_prev_btn, wifi_prev_page_event_cb,
-                      LV_EVENT_CLICKED, _UI);
+                      LV_EVENT_PRESSED, _UI);
   _UI->wifi_page_label = ui_create_label(panel, "1 / 1", lv_color_hex(C_MUTED));
   lv_obj_align(_UI->wifi_page_label, LV_ALIGN_BOTTOM_MID, 0, -8);
   _UI->wifi_next_btn = ui_create_button(panel, "Next", lv_color_hex(0x374151));
   lv_obj_set_size(_UI->wifi_next_btn, 76, 34);
   lv_obj_align(_UI->wifi_next_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
   lv_obj_add_event_cb(_UI->wifi_next_btn, wifi_next_page_event_cb,
-                      LV_EVENT_CLICKED, _UI);
+                      LV_EVENT_PRESSED, _UI);
   _UI->wifi_status_label = ui_create_label(panel, "", lv_color_white());
   lv_obj_align(_UI->wifi_status_label, LV_ALIGN_BOTTOM_MID, 0, -38);
   ui_update_wifi_rows(_UI);
@@ -2108,7 +2094,7 @@ static void ui_build_screen_facility(UI *_UI) {
       ui_create_button(panel, LV_SYMBOL_LEFT, lv_color_hex(0x374151));
   lv_obj_set_size(_UI->back_btn, 48, 48);
   lv_obj_align(_UI->back_btn, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_add_event_cb(_UI->back_btn, back_event_cb, LV_EVENT_CLICKED, _UI);
+  lv_obj_add_event_cb(_UI->back_btn, back_event_cb, LV_EVENT_PRESSED, _UI);
   if (_UI->setup_wizard_active) {
     lv_obj_add_flag(_UI->back_btn, LV_OBJ_FLAG_HIDDEN);
   }
@@ -2137,18 +2123,18 @@ static void ui_build_screen_facility(UI *_UI) {
   lv_obj_t *prev = ui_create_button(panel, "Prev", lv_color_hex(0x374151));
   lv_obj_set_size(prev, 90, 42);
   lv_obj_align(prev, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-  lv_obj_add_event_cb(prev, facility_prev_event_cb, LV_EVENT_CLICKED, _UI);
+  lv_obj_add_event_cb(prev, facility_prev_event_cb, LV_EVENT_PRESSED, _UI);
   _UI->facility_save_btn =
       ui_create_button(panel, _UI->setup_wizard_active ? "Finish" : "Save",
                        lv_color_hex(C_GREEN));
   lv_obj_set_size(_UI->facility_save_btn, 120, 42);
   lv_obj_align(_UI->facility_save_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_add_event_cb(_UI->facility_save_btn, facility_save_event_cb,
-                      LV_EVENT_CLICKED, _UI);
+                      LV_EVENT_PRESSED, _UI);
   lv_obj_t *next = ui_create_button(panel, "Next", lv_color_hex(0x374151));
   lv_obj_set_size(next, 90, 42);
   lv_obj_align(next, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-  lv_obj_add_event_cb(next, facility_next_event_cb, LV_EVENT_CLICKED, _UI);
+  lv_obj_add_event_cb(next, facility_next_event_cb, LV_EVENT_PRESSED, _UI);
   _UI->facility_status_label =
       ui_create_label(panel, "", lv_color_hex(C_MUTED));
   lv_obj_align(_UI->facility_status_label, LV_ALIGN_BOTTOM_MID, 0, -48);
@@ -2182,7 +2168,7 @@ static void ui_build_screen_device_info(UI *_UI) {
       ui_create_button(panel, LV_SYMBOL_LEFT, lv_color_hex(0x374151));
   lv_obj_set_size(_UI->back_btn, 48, 48);
   lv_obj_align(_UI->back_btn, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_add_event_cb(_UI->back_btn, back_event_cb, LV_EVENT_CLICKED, _UI);
+  lv_obj_add_event_cb(_UI->back_btn, back_event_cb, LV_EVENT_PRESSED, _UI);
   lv_obj_t *title =
       ui_create_label(panel, "Device Information", lv_color_white());
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 70, 0);
@@ -2527,13 +2513,13 @@ static void ui_open_wifi_password(UI *_UI, int _idx) {
                                       lv_color_hex(0x374151));
   lv_obj_set_size(cancel, 120, 42);
   lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-  lv_obj_add_event_cb(cancel, wifi_cancel_event_cb, LV_EVENT_CLICKED, _UI);
+  lv_obj_add_event_cb(cancel, wifi_cancel_event_cb, LV_EVENT_PRESSED, _UI);
 
   _UI->wifi_connect_btn = ui_create_button(_UI->wifi_password_panel, "Connect",
                                            lv_color_hex(C_BLUE));
   lv_obj_set_size(_UI->wifi_connect_btn, 120, 42);
   lv_obj_align(_UI->wifi_connect_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-  lv_obj_add_event_cb(_UI->wifi_connect_btn, connect_event_cb, LV_EVENT_CLICKED,
+  lv_obj_add_event_cb(_UI->wifi_connect_btn, connect_event_cb, LV_EVENT_PRESSED,
                       _UI);
 
   if (_UI->keyboard) {
@@ -2841,13 +2827,6 @@ void ui_set_time(UI *_UI, uint8_t h, uint8_t m, uint8_t s) {
   if (_UI->nav_clock_label) {
     lv_label_set_text(_UI->nav_clock_label, clock);
   }
-
-  if (_UI->energy_kwh_chart)
-    lv_obj_invalidate(_UI->energy_kwh_chart);
-  if (_UI->energy_cost_chart)
-    lv_obj_invalidate(_UI->energy_cost_chart);
-  if (_UI->energy_power_chart)
-    lv_obj_invalidate(_UI->energy_power_chart);
 }
 
 void ui_set_date(UI *_UI, uint16_t year, uint8_t month, uint8_t day) {
