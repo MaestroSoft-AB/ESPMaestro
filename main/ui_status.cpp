@@ -75,7 +75,8 @@ static void ui_status_taskwork(void *_context, uint64_t _now) {
     return;
 
   UIStatusState state = self->get_state();
-  if (state != UI_STATUS_UPDATE_CLOCK && self->should_log_state(state)) {
+  if (state != UI_STATUS_UPDATE_CLOCK && state != UI_STATUS_UPDATE_BME280 &&
+      self->should_log_state(state)) {
     ESP_LOGI(TAG, "%s", ui_status_state_name(state));
   }
 
@@ -103,6 +104,10 @@ static void ui_status_taskwork(void *_context, uint64_t _now) {
 
   case UI_STATUS_UPDATE_CLOCK:
     self->set_state(ui_status_update_clock(self, _now));
+    break;
+
+  case UI_STATUS_UPDATE_BME280:
+    self->set_state(ui_status_update_bme280(self, _now));
     break;
 
   default:

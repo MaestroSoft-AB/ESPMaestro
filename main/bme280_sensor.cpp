@@ -5,6 +5,7 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <time.h>
+
 static const char *TAG = "bme280";
 
 bool bme280::init(i2c_master_bus_handle_t bus) {
