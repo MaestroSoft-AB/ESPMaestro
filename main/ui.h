@@ -26,6 +26,12 @@ typedef enum {
   UI_VIEW_TABLE,
 } UI_ViewMode;
 
+typedef enum {
+  UI_RANGE_24H = 0,
+  UI_RANGE_7D,
+  UI_RANGE_30D,
+} UI_Range;
+
 typedef struct {
   lv_obj_t *root;
   lv_obj_t *nav;
@@ -59,6 +65,24 @@ typedef struct {
   lv_obj_t *forecast_table;
   lv_obj_t *forecast_graph_btn;
   lv_obj_t *forecast_table_btn;
+  lv_obj_t *forecast_table_prev_btn;
+  lv_obj_t *forecast_table_next_btn;
+  lv_obj_t *forecast_table_page_label;
+  lv_obj_t *forecast_range_24h_btn;
+  lv_obj_t *forecast_range_7d_btn;
+  lv_obj_t *forecast_range_30d_btn;
+  lv_obj_t *forecast_x_axis_label;
+  lv_obj_t *forecast_y_axis_label;
+  lv_chart_series_t *forecast_temp_series;
+  lv_obj_t *forecast_detail_overlay;
+  lv_obj_t *forecast_detail_page1;
+  lv_obj_t *forecast_detail_page2;
+  lv_obj_t *forecast_detail_prev_btn;
+  lv_obj_t *forecast_detail_next_btn;
+  lv_obj_t *forecast_detail_page_label;
+  int forecast_detail_page;
+  int forecast_table_page;
+  UI_Range forecast_range;
   UI_ViewMode forecast_view_mode;
 
   lv_obj_t *elpriser_chart;
@@ -118,9 +142,16 @@ typedef struct {
   lv_obj_t *energy_power_chart;
   lv_obj_t *energy_power_label;
   lv_obj_t *energy_max_power_label;
+  lv_obj_t *energy_range_btn_row;
+  lv_obj_t *energy_range_24h_btn;
+  lv_obj_t *energy_range_7d_btn;
+  lv_obj_t *energy_range_30d_btn;
+  lv_obj_t *energy_range_notice_label;
   lv_chart_series_t *energy_kwh_series;
   lv_chart_series_t *energy_cost_series;
   lv_chart_series_t *energy_power_series;
+  lv_obj_t *energy_detail_overlay;
+  UI_Range energy_range;
 
   WeatherData cached_weather;
   ElectricityData cached_electricity;

@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "dashboard_data_api.h"
 #include "esp_log.h"
 #include "wifi_handler.h"
 #include <stdio.h>
@@ -57,8 +58,8 @@ static void ui_create_metric_card(lv_obj_t *_parent, const char *_title,
 static void ui_create_settings_card(UI *_UI, lv_obj_t *_parent, lv_obj_t **_out,
                                     const char *_title, const char *_sub,
                                     lv_color_t _accent);
-static void ui_fill_chart(lv_obj_t *_chart, const int *_values, int _count,
-                          lv_color_t _color);
+static void ui_update_forecast_data(UI *ui, const WeatherData *weather);
+static int ui_forecast_table_page_count(void);
 static void ui_update_wifi_rows(UI *_UI);
 static void ui_open_wifi_password(UI *_UI, int _idx);
 static void ui_close_wifi_password(UI *_UI);
@@ -68,6 +69,8 @@ static void nav_event_cb(lv_event_t *_event);
 static void back_event_cb(lv_event_t *_event);
 static void settings_card_event_cb(lv_event_t *_event);
 static void view_toggle_event_cb(lv_event_t *_event);
+static void forecast_range_event_cb(lv_event_t *_event);
+static void energy_range_event_cb(lv_event_t *_event);
 static void wifi_scan_btn_event_cb(lv_event_t *_event);
 static void wifi_network_row_event_cb(lv_event_t *_event);
 static void wifi_prev_page_event_cb(lv_event_t *_event);
@@ -78,6 +81,13 @@ static void wifi_show_password_event_cb(lv_event_t *_event);
 static void facility_prev_event_cb(lv_event_t *_event);
 static void facility_next_event_cb(lv_event_t *_event);
 static void facility_save_event_cb(lv_event_t *_event);
+static void forecast_chart_event_cb(lv_event_t *_event);
+static void forecast_detail_close_event_cb(lv_event_t *_event);
+static void forecast_detail_page_event_cb(lv_event_t *_event);
+static void forecast_table_page_event_cb(lv_event_t *_event);
+static void energy_chart_event_cb(lv_event_t *_event);
+static void energy_detail_close_event_cb(lv_event_t *_event);
+static void energy_detail_info_event_cb(lv_event_t *_event);
 
 /****************** HELP ME *************************/
 
@@ -128,8 +138,16 @@ static void textarea_event_cb(lv_event_t *e) {
 
 /****************************CHART********************/
 
-#define UI_ENERGY_CHART_POINTS 24
-#define UI_ENERGY_TIME_TICKS 5
+#define UI_ENERGY_TIME_TICKS_MAX 6
+#define UI_FORECAST_CHART_POINTS 24
+#define UI_FORECAST_TIME_TICKS 5
+#define UI_FORECAST_TABLE_ROWS_PER_PAGE 4
+
+typedef enum {
+  UI_ENERGY_DETAIL_CONSUMPTION = 0,
+  UI_ENERGY_DETAIL_COST,
+  UI_ENERGY_DETAIL_POWER,
+} UI_EnergyDetailKind;
 
 static int ui_max_float_scaled(const float *v, int count, float scale) {
   int max_v = 1;
@@ -153,23 +171,169 @@ static int ui_max_u32(const uint32_t *v, int count) {
   return max_v;
 }
 
-static void ui_energy_chart_time_label(int tick, char *buf, uint32_t buf_size) {
+static float ui_avg_float_masked(const float *v, const bool *has_data, int count) {
+  float total = 0.0f;
+  int samples = 0;
+
+  if (!v || !has_data || count <= 0)
+    return 0.0f;
+
+  for (int i = 0; i < count; i++) {
+    if (!has_data[i])
+      continue;
+    total += v[i];
+    samples++;
+  }
+
+  return samples > 0 ? total / (float)samples : 0.0f;
+}
+
+static int ui_percent_delta_float(float value, float avg) {
+  if (avg <= 0.0f)
+    return 0;
+
+  return (int)(((value - avg) * 100.0f) / avg);
+}
+
+static int ui_percent_of_u32(uint32_t value, uint32_t max) {
+  if (max == 0)
+    return 0;
+
+  return (int)(((uint64_t)value * 100ULL) / (uint64_t)max);
+}
+
+static void ui_format_signed_percent(char *buf, size_t size, int percent) {
+  if (!buf || size == 0)
+    return;
+
+  snprintf(buf, size, "%+d%%", percent);
+}
+
+static int ui_energy_point_count(const UI *ui) {
+  if (!ui)
+    return 24;
+  if (ui->cached_realtime.point_count > 0 &&
+      ui->cached_realtime.point_count <= DASHBOARD_ENERGY_MAX_POINTS) {
+    return ui->cached_realtime.point_count;
+  }
+  return ui->energy_range == UI_RANGE_30D ? 30
+         : ui->energy_range == UI_RANGE_7D ? 7
+                                           : 24;
+}
+
+static int ui_energy_tick_count(const UI *ui) {
+  int point_count = ui_energy_point_count(ui);
+  return point_count <= UI_ENERGY_TIME_TICKS_MAX ? point_count
+                                                 : UI_ENERGY_TIME_TICKS_MAX;
+}
+
+static int ui_energy_tick_to_point_index(const UI *ui, int tick) {
+  int point_count = ui_energy_point_count(ui);
+  int tick_count = ui_energy_tick_count(ui);
+  if (point_count <= 0 || tick_count <= 0)
+    return 0;
+  if (tick < 0)
+    tick = 0;
+  if (tick >= tick_count)
+    tick = tick_count - 1;
+  if (tick_count == 1)
+    return 0;
+  return (tick * (point_count - 1)) / (tick_count - 1);
+}
+
+static void ui_energy_chart_time_label(const UI *ui, int tick, char *buf,
+                                       uint32_t buf_size) {
   if (buf == NULL || buf_size == 0)
     return;
 
-  if (tick < 0)
-    tick = 0;
-  if (tick >= UI_ENERGY_TIME_TICKS)
-    tick = UI_ENERGY_TIME_TICKS - 1;
+  if (ui && ui->cached_realtime.point_count > 0) {
+    int index = ui_energy_tick_to_point_index(ui, tick);
+    snprintf(buf, buf_size, "%s", ui->cached_realtime.labels[index]);
+    return;
+  }
 
-  if (tick == UI_ENERGY_TIME_TICKS - 1) {
+  if (tick == UI_ENERGY_TIME_TICKS_MAX - 1) {
     snprintf(buf, buf_size, "24:00");
   } else {
     snprintf(buf, buf_size, "%02d:00", tick * 6);
   }
 }
 
+static void ui_energy_hour_range_label(uint32_t hour, char *buf,
+                                       size_t buf_size) {
+  if (!buf || buf_size == 0)
+    return;
+
+  uint32_t start = hour % 24;
+  uint32_t end = (start + 1) % 24;
+  snprintf(buf, buf_size, "%02lu:00-%02lu:00", (unsigned long)start,
+           (unsigned long)end);
+}
+
+static void ui_energy_point_label(const UI *ui, uint32_t index, char *buf,
+                                  size_t buf_size) {
+  if (!buf || buf_size == 0)
+    return;
+
+  if (!ui || index >= DASHBOARD_ENERGY_MAX_POINTS) {
+    snprintf(buf, buf_size, "--");
+    return;
+  }
+
+  if (ui->cached_realtime.interval_minutes >= 1440 &&
+      ui->cached_realtime.labels[index][0] != '\0') {
+    snprintf(buf, buf_size, "%s", ui->cached_realtime.labels[index]);
+    return;
+  }
+
+  ui_energy_hour_range_label(index, buf, buf_size);
+}
+
+static void ui_forecast_time_axis_label(int tick, char *buf,
+                                        uint32_t buf_size) {
+  if (buf == NULL || buf_size == 0)
+    return;
+
+  if (tick < 0)
+    tick = 0;
+  if (tick >= UI_FORECAST_TIME_TICKS)
+    tick = UI_FORECAST_TIME_TICKS - 1;
+
+  if (tick == UI_FORECAST_TIME_TICKS - 1) {
+    snprintf(buf, buf_size, "24");
+  } else {
+    snprintf(buf, buf_size, "%02d", tick * 6);
+  }
+}
+
+static void ui_forecast_temp_axis_label(int scaled_temp, char *buf,
+                                        uint32_t buf_size) {
+  if (buf == NULL || buf_size == 0)
+    return;
+
+  snprintf(buf, buf_size, "%dC", scaled_temp / 10);
+}
+
+static const char *ui_weather_code_summary(uint16_t code) {
+  if (code == 0)
+    return "Clear";
+  if (code == 1 || code == 2)
+    return "Partly cloudy";
+  if (code == 3)
+    return "Cloudy";
+  if (code == 45 || code == 48)
+    return "Fog";
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82))
+    return "Rain";
+  if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86))
+    return "Snow";
+  if (code >= 95)
+    return "Thunder";
+  return "Forecast";
+}
+
 static void chart_time_axis_draw_cb(lv_event_t *e) {
+  UI *ui = lv_event_get_user_data(e);
   lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
   if (!lv_obj_draw_part_check_type(dsc, &lv_chart_class,
                                    LV_CHART_DRAW_PART_TICK_LABEL)) {
@@ -179,7 +343,24 @@ static void chart_time_axis_draw_cb(lv_event_t *e) {
   if (dsc->id != LV_CHART_AXIS_PRIMARY_X || dsc->text == NULL)
     return;
 
-  ui_energy_chart_time_label(dsc->value, dsc->text, dsc->text_length);
+  ui_energy_chart_time_label(ui, dsc->value, dsc->text, dsc->text_length);
+}
+
+static void forecast_axis_draw_cb(lv_event_t *e) {
+  lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
+  if (!lv_obj_draw_part_check_type(dsc, &lv_chart_class,
+                                   LV_CHART_DRAW_PART_TICK_LABEL)) {
+    return;
+  }
+
+  if (dsc->text == NULL)
+    return;
+
+  if (dsc->id == LV_CHART_AXIS_PRIMARY_X) {
+    ui_forecast_time_axis_label(dsc->value, dsc->text, dsc->text_length);
+  } else if (dsc->id == LV_CHART_AXIS_PRIMARY_Y) {
+    ui_forecast_temp_axis_label(dsc->value, dsc->text, dsc->text_length);
+  }
 }
 
 static void ui_style_chart(lv_obj_t *chart) {
@@ -194,11 +375,117 @@ static void ui_style_chart(lv_obj_t *chart) {
 
 static void ui_configure_energy_chart(UI *ui, lv_obj_t *chart) {
   ui_style_chart(chart);
-  lv_chart_set_point_count(chart, UI_ENERGY_CHART_POINTS);
+  lv_chart_set_point_count(chart, ui_energy_point_count(ui));
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 4, 2,
-                         UI_ENERGY_TIME_TICKS, 1, true, 30);
+                         ui_energy_tick_count(ui), 1, true, 42);
   lv_obj_add_event_cb(chart, chart_time_axis_draw_cb, LV_EVENT_DRAW_PART_BEGIN,
                       ui);
+}
+
+static lv_obj_t *ui_create_range_button(lv_obj_t *parent, const char *text,
+                                        UI_Range range, UI *ui,
+                                        lv_event_cb_t cb) {
+  lv_obj_t *btn = ui_create_button(parent, text, lv_color_hex(C_CARD));
+  lv_obj_set_size(btn, 56, 32);
+  lv_obj_set_user_data(btn, (void *)(uintptr_t)range);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, ui);
+  return btn;
+}
+
+static void ui_set_range_btn_state(lv_obj_t *btn, bool active) {
+  if (!btn)
+    return;
+
+  lv_obj_set_style_bg_color(btn, lv_color_hex(active ? C_BLUE : C_CARD), 0);
+  lv_obj_set_style_border_color(btn, lv_color_hex(active ? C_BLUE : C_BORDER),
+                                0);
+}
+
+static void ui_update_forecast_range_buttons(UI *ui) {
+  if (!ui)
+    return;
+
+  ui_set_range_btn_state(ui->forecast_range_24h_btn,
+                         ui->forecast_range == UI_RANGE_24H);
+  ui_set_range_btn_state(ui->forecast_range_7d_btn,
+                         ui->forecast_range == UI_RANGE_7D);
+  ui_set_range_btn_state(ui->forecast_range_30d_btn,
+                         ui->forecast_range == UI_RANGE_30D);
+}
+
+static void ui_apply_forecast_view(UI *ui) {
+  if (!ui)
+    return;
+
+  bool multi_day = ui->forecast_range != UI_RANGE_24H;
+  UI_ViewMode effective_view =
+      multi_day ? UI_VIEW_TABLE : ui->forecast_view_mode;
+  bool show_table = effective_view == UI_VIEW_TABLE;
+
+  if (ui->forecast_chart) {
+    if (show_table || multi_day)
+      lv_obj_add_flag(ui->forecast_chart, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_clear_flag(ui->forecast_chart, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (ui->forecast_x_axis_label) {
+    if (show_table || multi_day)
+      lv_obj_add_flag(ui->forecast_x_axis_label, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_clear_flag(ui->forecast_x_axis_label, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (ui->forecast_y_axis_label) {
+    if (show_table || multi_day)
+      lv_obj_add_flag(ui->forecast_y_axis_label, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_clear_flag(ui->forecast_y_axis_label, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (ui->forecast_table) {
+    if (show_table)
+      lv_obj_clear_flag(ui->forecast_table, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_add_flag(ui->forecast_table, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (ui->forecast_table_prev_btn) {
+    if (show_table && !multi_day && ui->forecast_table_page > 0)
+      lv_obj_clear_flag(ui->forecast_table_prev_btn, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_add_flag(ui->forecast_table_prev_btn, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (ui->forecast_table_next_btn) {
+    if (show_table && !multi_day &&
+        ui->forecast_table_page < ui_forecast_table_page_count() - 1)
+      lv_obj_clear_flag(ui->forecast_table_next_btn, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_add_flag(ui->forecast_table_next_btn, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (ui->forecast_table_page_label) {
+    if (show_table && !multi_day)
+      lv_obj_clear_flag(ui->forecast_table_page_label, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_add_flag(ui->forecast_table_page_label, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  ui_set_range_btn_state(ui->forecast_graph_btn, !show_table);
+  ui_set_range_btn_state(ui->forecast_table_btn, show_table);
+}
+
+static void ui_update_energy_range_buttons(UI *ui) {
+  if (!ui)
+    return;
+
+  ui_set_range_btn_state(ui->energy_range_24h_btn,
+                         ui->energy_range == UI_RANGE_24H);
+  ui_set_range_btn_state(ui->energy_range_7d_btn,
+                         ui->energy_range == UI_RANGE_7D);
+  ui_set_range_btn_state(ui->energy_range_30d_btn,
+                         ui->energy_range == UI_RANGE_30D);
 }
 
 static void ui_set_bar_chart_float(lv_obj_t *chart, lv_chart_series_t *ser,
@@ -219,6 +506,373 @@ static void ui_set_bar_chart_float(lv_obj_t *chart, lv_chart_series_t *ser,
   lv_chart_refresh(chart);
 }
 
+static lv_obj_t *ui_energy_detail_row(lv_obj_t *parent, const char *name,
+                                      const char *value) {
+  lv_obj_t *row = lv_obj_create(parent);
+  lv_obj_set_size(row, LV_PCT(100), 30);
+  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(row, 0, 0);
+  lv_obj_set_style_pad_all(row, 0, 0);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *name_label = ui_create_label(row, name, lv_color_hex(C_MUTED));
+  lv_obj_align(name_label, LV_ALIGN_LEFT_MID, 0, 0);
+
+  lv_obj_t *value_label = ui_create_label(row, value, lv_color_white());
+  lv_obj_align(value_label, LV_ALIGN_RIGHT_MID, 0, 0);
+
+  return row;
+}
+
+static void ui_close_energy_detail(UI *ui) {
+  if (!ui || !ui->energy_detail_overlay)
+    return;
+
+  lv_obj_del(ui->energy_detail_overlay);
+  ui->energy_detail_overlay = NULL;
+}
+
+static void ui_close_forecast_detail(UI *ui) {
+  if (!ui || !ui->forecast_detail_overlay)
+    return;
+
+  lv_obj_del(ui->forecast_detail_overlay);
+  ui->forecast_detail_overlay = NULL;
+  ui->forecast_detail_page1 = NULL;
+  ui->forecast_detail_page2 = NULL;
+  ui->forecast_detail_prev_btn = NULL;
+  ui->forecast_detail_next_btn = NULL;
+  ui->forecast_detail_page_label = NULL;
+  ui->forecast_detail_page = 0;
+}
+
+static void ui_set_forecast_detail_page(UI *ui, int page) {
+  if (!ui || !ui->forecast_detail_page1 || !ui->forecast_detail_page2)
+    return;
+
+  if (page < 0)
+    page = 0;
+  if (page > 1)
+    page = 1;
+
+  ui->forecast_detail_page = page;
+
+  if (page == 0) {
+    lv_obj_clear_flag(ui->forecast_detail_page1, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui->forecast_detail_page2, LV_OBJ_FLAG_HIDDEN);
+    if (ui->forecast_detail_prev_btn)
+      lv_obj_add_state(ui->forecast_detail_prev_btn, LV_STATE_DISABLED);
+    if (ui->forecast_detail_next_btn)
+      lv_obj_clear_state(ui->forecast_detail_next_btn, LV_STATE_DISABLED);
+  } else {
+    lv_obj_add_flag(ui->forecast_detail_page1, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(ui->forecast_detail_page2, LV_OBJ_FLAG_HIDDEN);
+    if (ui->forecast_detail_prev_btn)
+      lv_obj_clear_state(ui->forecast_detail_prev_btn, LV_STATE_DISABLED);
+    if (ui->forecast_detail_next_btn)
+      lv_obj_add_state(ui->forecast_detail_next_btn, LV_STATE_DISABLED);
+  }
+
+  if (ui->forecast_detail_page_label) {
+    lv_label_set_text_fmt(ui->forecast_detail_page_label, "%d / 2", page + 1);
+  }
+}
+
+static void ui_show_forecast_detail(UI *ui, uint32_t hour) {
+  if (!ui || !ui->has_dashboard_data || hour >= UI_FORECAST_CHART_POINTS ||
+      !ui->cached_weather.valid)
+    return;
+
+  ui_close_forecast_detail(ui);
+
+  const WeatherData *weather = &ui->cached_weather;
+  char hour_label[24];
+  char primary[32];
+  char temp_value[32];
+  char rain_value[32];
+  char wind_value[32];
+  char solar_value[32];
+  char condition_value[32];
+  char code_value[32];
+  char rain_detail[40];
+
+  ui_energy_hour_range_label(hour, hour_label, sizeof(hour_label));
+  snprintf(primary, sizeof(primary), "%.1fC", weather->temp_c_24h[hour]);
+  snprintf(temp_value, sizeof(temp_value), "%.1fC", weather->temp_c_24h[hour]);
+  snprintf(rain_value, sizeof(rain_value), "%u%%",
+           weather->rain_percent_24h[hour]);
+  snprintf(wind_value, sizeof(wind_value), "%.0f km/h",
+           weather->wind_kmh_24h[hour]);
+  snprintf(solar_value, sizeof(solar_value), "%u W/m2",
+           weather->shortwave_wm2_24h[hour]);
+  snprintf(condition_value, sizeof(condition_value), "%s",
+           ui_weather_code_summary(weather->weather_code_24h[hour]));
+  snprintf(code_value, sizeof(code_value), "%u",
+           weather->weather_code_24h[hour]);
+  snprintf(rain_detail, sizeof(rain_detail), "Probability %u%%",
+           weather->rain_percent_24h[hour]);
+
+  ui->forecast_detail_overlay = lv_obj_create(lv_layer_top());
+  lv_obj_set_size(ui->forecast_detail_overlay, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_color(ui->forecast_detail_overlay, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(ui->forecast_detail_overlay, LV_OPA_70, 0);
+  lv_obj_set_style_border_width(ui->forecast_detail_overlay, 0, 0);
+  lv_obj_clear_flag(ui->forecast_detail_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *panel = lv_obj_create(ui->forecast_detail_overlay);
+  lv_obj_set_size(panel, 430, 315);
+  lv_obj_center(panel);
+  lv_obj_set_style_bg_color(panel, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_border_color(panel, lv_color_hex(C_BLUE), 0);
+  lv_obj_set_style_border_width(panel, 2, 0);
+  lv_obj_set_style_radius(panel, 8, 0);
+  lv_obj_set_style_pad_all(panel, 18, 0);
+  lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *title = ui_create_label(panel, hour_label, lv_color_white());
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  lv_obj_t *subtitle =
+      ui_create_label(panel, "Weather detail", lv_color_hex(C_MUTED));
+  lv_obj_align(subtitle, LV_ALIGN_TOP_LEFT, 0, 24);
+
+  lv_obj_t *close =
+      ui_create_button(panel, LV_SYMBOL_CLOSE, lv_color_hex(C_CARD));
+  lv_obj_set_size(close, 36, 36);
+  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, 0);
+  lv_obj_add_event_cb(close, forecast_detail_close_event_cb, LV_EVENT_CLICKED,
+                      ui);
+
+  lv_obj_t *primary_label =
+      ui_create_label(panel, primary, lv_color_hex(C_BLUE));
+  lv_obj_align(primary_label, LV_ALIGN_TOP_MID, 0, 58);
+
+  ui->forecast_detail_page1 = lv_obj_create(panel);
+  lv_obj_set_size(ui->forecast_detail_page1, LV_PCT(100), 122);
+  lv_obj_align(ui->forecast_detail_page1, LV_ALIGN_TOP_LEFT, 0, 98);
+  lv_obj_set_style_bg_opa(ui->forecast_detail_page1, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ui->forecast_detail_page1, 0, 0);
+  lv_obj_set_style_pad_all(ui->forecast_detail_page1, 0, 0);
+  lv_obj_clear_flag(ui->forecast_detail_page1, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *row = ui_energy_detail_row(ui->forecast_detail_page1, "Condition",
+                                       condition_value);
+  lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, 0);
+  row = ui_energy_detail_row(ui->forecast_detail_page1, "Temperature",
+                             temp_value);
+  lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, 34);
+  row = ui_energy_detail_row(ui->forecast_detail_page1, "Precipitation",
+                             rain_value);
+  lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, 68);
+
+  ui->forecast_detail_page2 = lv_obj_create(panel);
+  lv_obj_set_size(ui->forecast_detail_page2, LV_PCT(100), 122);
+  lv_obj_align(ui->forecast_detail_page2, LV_ALIGN_TOP_LEFT, 0, 98);
+  lv_obj_set_style_bg_opa(ui->forecast_detail_page2, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ui->forecast_detail_page2, 0, 0);
+  lv_obj_set_style_pad_all(ui->forecast_detail_page2, 0, 0);
+  lv_obj_clear_flag(ui->forecast_detail_page2, LV_OBJ_FLAG_SCROLLABLE);
+
+  row = ui_energy_detail_row(ui->forecast_detail_page2, "Wind", wind_value);
+  lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, 0);
+  row = ui_energy_detail_row(ui->forecast_detail_page2, "Solar", solar_value);
+  lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, 34);
+  row = ui_energy_detail_row(ui->forecast_detail_page2, "Weather code",
+                             code_value);
+  lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, 68);
+  row = ui_energy_detail_row(ui->forecast_detail_page2, "Rain detail",
+                             rain_detail);
+  lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, 102);
+
+  ui->forecast_detail_prev_btn =
+      ui_create_button(panel, LV_SYMBOL_LEFT, lv_color_hex(C_CARD));
+  lv_obj_set_size(ui->forecast_detail_prev_btn, 42, 36);
+  lv_obj_align(ui->forecast_detail_prev_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  lv_obj_add_event_cb(ui->forecast_detail_prev_btn,
+                      forecast_detail_page_event_cb, LV_EVENT_CLICKED, ui);
+  lv_obj_set_user_data(ui->forecast_detail_prev_btn, (void *)(uintptr_t)0);
+
+  ui->forecast_detail_next_btn =
+      ui_create_button(panel, LV_SYMBOL_RIGHT, lv_color_hex(C_CARD));
+  lv_obj_set_size(ui->forecast_detail_next_btn, 42, 36);
+  lv_obj_align(ui->forecast_detail_next_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  lv_obj_add_event_cb(ui->forecast_detail_next_btn,
+                      forecast_detail_page_event_cb, LV_EVENT_CLICKED, ui);
+  lv_obj_set_user_data(ui->forecast_detail_next_btn, (void *)(uintptr_t)1);
+
+  ui->forecast_detail_page_label =
+      ui_create_label(panel, "1 / 2", lv_color_hex(C_MUTED));
+  lv_obj_align(ui->forecast_detail_page_label, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+  ui_set_forecast_detail_page(ui, 0);
+}
+
+static void ui_show_energy_detail(UI *ui, UI_EnergyDetailKind kind,
+                                  uint32_t hour) {
+  int point_count = ui_energy_point_count(ui);
+  if (!ui || !ui->has_dashboard_data || hour >= (uint32_t)point_count)
+    return;
+  if (!ui->cached_realtime.has_data[hour])
+    return;
+
+  ui_close_energy_detail(ui);
+
+  const RealtimeData *rt = &ui->cached_realtime;
+  const ElectricityData *el = &ui->cached_electricity;
+  float kwh = rt->kwh_24h[hour];
+  float cost = rt->cost_24h[hour];
+  uint32_t power = rt->power_24h[hour];
+  float price = 0.0f;
+
+  if (kwh > 0.001f) {
+    price = cost / kwh;
+  } else if (el->valid) {
+    price = el->sek_24h[hour];
+  }
+
+  const char *detail_title = "Consumption detail";
+  lv_color_t accent = lv_color_hex(C_GREEN);
+  char primary[32];
+  char comparison_label[24];
+  char comparison_value[24];
+  char info_text[220];
+
+  if (kind == UI_ENERGY_DETAIL_COST) {
+    detail_title = "Cost detail";
+    accent = lv_color_hex(C_YELLOW);
+    snprintf(primary, sizeof(primary), "%.2f SEK", cost);
+    snprintf(comparison_label, sizeof(comparison_label), "Vs avg cost");
+    ui_format_signed_percent(
+        comparison_value, sizeof(comparison_value),
+        ui_percent_delta_float(
+            cost, ui_avg_float_masked(rt->cost_24h, rt->has_data, point_count)));
+    snprintf(info_text, sizeof(info_text),
+             "Cost is the estimated SEK spent in this period. Price is SEK "
+             "per kWh. Consumption shows the energy that created the cost.");
+  } else if (kind == UI_ENERGY_DETAIL_POWER) {
+    detail_title = "Power detail";
+    accent = lv_color_hex(C_BLUE);
+    snprintf(primary, sizeof(primary), "%lu W", (unsigned long)power);
+    if (ui->energy_range == UI_RANGE_7D) {
+      snprintf(comparison_label, sizeof(comparison_label), "Vs max 7d");
+    } else if (ui->energy_range == UI_RANGE_30D) {
+      snprintf(comparison_label, sizeof(comparison_label), "Vs max 30d");
+    } else {
+      snprintf(comparison_label, sizeof(comparison_label), "Vs max 24h");
+    }
+    snprintf(comparison_value, sizeof(comparison_value), "%d%%",
+             ui_percent_of_u32(power, rt->max_power_w_24h));
+    snprintf(info_text, sizeof(info_text),
+             "Power is the momentary load measured for this hour. Consumption "
+             "is accumulated energy. Cost combines consumption with price.");
+  } else {
+    snprintf(primary, sizeof(primary), "%.2f kWh", kwh);
+    snprintf(comparison_label, sizeof(comparison_label), "Vs avg use");
+    ui_format_signed_percent(
+        comparison_value, sizeof(comparison_value),
+        ui_percent_delta_float(
+            kwh, ui_avg_float_masked(rt->kwh_24h, rt->has_data, point_count)));
+    snprintf(info_text, sizeof(info_text),
+             "Consumption is the energy used during this period. Cost is the "
+             "estimated SEK for that energy. Power shows load in watts.");
+  }
+
+  char hour_label[24];
+  char kwh_value[32];
+  char cost_value[32];
+  char price_value[32];
+  char power_value[32];
+  ui_energy_point_label(ui, hour, hour_label, sizeof(hour_label));
+  snprintf(kwh_value, sizeof(kwh_value), "%.2f kWh", kwh);
+  snprintf(cost_value, sizeof(cost_value), "%.2f SEK", cost);
+  snprintf(price_value, sizeof(price_value), "%.2f SEK/kWh", price);
+  snprintf(power_value, sizeof(power_value), "%lu W", (unsigned long)power);
+
+  ui->energy_detail_overlay = lv_obj_create(lv_layer_top());
+  lv_obj_set_size(ui->energy_detail_overlay, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_color(ui->energy_detail_overlay, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(ui->energy_detail_overlay, LV_OPA_70, 0);
+  lv_obj_set_style_border_width(ui->energy_detail_overlay, 0, 0);
+  lv_obj_clear_flag(ui->energy_detail_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *panel = lv_obj_create(ui->energy_detail_overlay);
+  lv_obj_set_size(panel, 430, 330);
+  lv_obj_center(panel);
+  lv_obj_set_style_bg_color(panel, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_border_color(panel, accent, 0);
+  lv_obj_set_style_border_width(panel, 2, 0);
+  lv_obj_set_style_radius(panel, 8, 0);
+  lv_obj_set_style_pad_all(panel, 18, 0);
+  lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *title = ui_create_label(panel, hour_label, lv_color_white());
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  lv_obj_t *subtitle =
+      ui_create_label(panel, detail_title, lv_color_hex(C_MUTED));
+  lv_obj_align(subtitle, LV_ALIGN_TOP_LEFT, 0, 24);
+
+  lv_obj_t *close =
+      ui_create_button(panel, LV_SYMBOL_CLOSE, lv_color_hex(C_CARD));
+  lv_obj_set_size(close, 36, 36);
+  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, 0);
+  lv_obj_add_event_cb(close, energy_detail_close_event_cb, LV_EVENT_CLICKED,
+                      ui);
+
+  lv_obj_t *info = ui_create_button(panel, "i", lv_color_hex(C_CARD));
+  lv_obj_set_size(info, 36, 36);
+  lv_obj_align(info, LV_ALIGN_TOP_RIGHT, -44, 0);
+
+  lv_obj_t *primary_label = ui_create_label(panel, primary, accent);
+  lv_obj_set_style_text_font(primary_label, &notosans_14, 0);
+  lv_obj_align(primary_label, LV_ALIGN_TOP_MID, 0, 58);
+
+  int y = 102;
+  if (kind != UI_ENERGY_DETAIL_CONSUMPTION) {
+    lv_obj_t *row = ui_energy_detail_row(panel, "Consumption", kwh_value);
+    lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, y);
+    y += 34;
+  }
+  if (kind != UI_ENERGY_DETAIL_COST) {
+    lv_obj_t *row = ui_energy_detail_row(panel, "Cost", cost_value);
+    lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, y);
+    y += 34;
+  }
+  lv_obj_t *price_row = ui_energy_detail_row(panel, "Price", price_value);
+  lv_obj_align(price_row, LV_ALIGN_TOP_LEFT, 0, y);
+  y += 34;
+
+  if (kind != UI_ENERGY_DETAIL_POWER) {
+    lv_obj_t *row = ui_energy_detail_row(panel, "Power", power_value);
+    lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, y);
+    y += 34;
+  }
+
+  lv_obj_t *comparison_row =
+      ui_energy_detail_row(panel, comparison_label, comparison_value);
+  lv_obj_align(comparison_row, LV_ALIGN_TOP_LEFT, 0, y);
+
+  lv_obj_t *info_box = lv_obj_create(panel);
+  lv_obj_set_size(info_box, LV_PCT(100), 70);
+  lv_obj_align(info_box, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  lv_obj_set_style_bg_color(info_box, lv_color_hex(C_CARD_DARK), 0);
+  lv_obj_set_style_border_color(info_box, lv_color_hex(C_BORDER), 0);
+  lv_obj_set_style_border_width(info_box, 1, 0);
+  lv_obj_set_style_radius(info_box, 8, 0);
+  lv_obj_set_style_pad_all(info_box, 10, 0);
+  lv_obj_clear_flag(info_box, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(info_box, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t *info_label =
+      ui_create_label(info_box, info_text, lv_color_hex(C_MUTED));
+  lv_obj_set_width(info_label, LV_PCT(100));
+  lv_label_set_long_mode(info_label, LV_LABEL_LONG_WRAP);
+  lv_obj_align(info_label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  lv_obj_set_user_data(info, info_box);
+  lv_obj_add_event_cb(info, energy_detail_info_event_cb, LV_EVENT_CLICKED, ui);
+}
+
 static void ui_set_line_chart_u32(lv_obj_t *chart, lv_chart_series_t *ser,
                                   const uint32_t *values, int count) {
   if (!chart || !ser || !values)
@@ -236,11 +890,38 @@ static void ui_set_line_chart_u32(lv_obj_t *chart, lv_chart_series_t *ser,
   lv_chart_refresh(chart);
 }
 
+static void ui_update_energy_range_view(UI *ui) {
+  if (!ui)
+    return;
+
+  ui_update_energy_range_buttons(ui);
+  lv_obj_t *objs[] = {ui->energy_kwh_chart, ui->energy_cost_chart,
+                      ui->energy_power_chart, ui->energy_power_label,
+                      ui->energy_max_power_label};
+
+  for (int i = 0; i < 5; i++) {
+    if (!objs[i])
+      continue;
+    lv_obj_clear_flag(objs[i], LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (ui->energy_range_notice_label) {
+    const char *caption = "Showing 24h profile";
+    if (ui->energy_range == UI_RANGE_7D) {
+      caption = "Showing 7-day historical profile";
+    } else if (ui->energy_range == UI_RANGE_30D) {
+      caption = "Showing 30-day historical profile";
+    }
+    lv_label_set_text(ui->energy_range_notice_label, caption);
+    lv_obj_clear_flag(ui->energy_range_notice_label, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
 void ui_set_dashboard_data(UI *ui, const WeatherData *weather,
                            const ElectricityData *electricity,
                            const RealtimeData *realtime) {
   if (ui == NULL || weather == NULL || electricity == NULL ||
-      realtime == NULL || realtime->valid == false) {
+      realtime == NULL) {
     return;
   }
 
@@ -249,29 +930,66 @@ void ui_set_dashboard_data(UI *ui, const WeatherData *weather,
   ui->cached_realtime = *realtime;
   ui->has_dashboard_data = true;
 
+  if (weather->valid) {
+    ui_update_forecast_data(ui, weather);
+  }
+
+  if (realtime->valid == false) {
+    return;
+  }
+
+  ui_update_energy_range_view(ui);
+
+  int point_count = ui_energy_point_count(ui);
+  int tick_count = ui_energy_tick_count(ui);
+  if (point_count <= 0)
+    return;
+
   if (ui->energy_kwh_chart != NULL && ui->energy_kwh_series != NULL) {
+    lv_chart_set_point_count(ui->energy_kwh_chart, point_count);
+    lv_chart_set_axis_tick(ui->energy_kwh_chart, LV_CHART_AXIS_PRIMARY_X, 4, 2,
+                           tick_count, 1, true, 42);
     ui_set_bar_chart_float(ui->energy_kwh_chart, ui->energy_kwh_series,
-                           realtime->kwh_24h, 24, 100.0f);
+                           realtime->kwh_24h, point_count, 100.0f);
   }
 
   if (ui->energy_cost_chart != NULL && ui->energy_cost_series != NULL) {
+    lv_chart_set_point_count(ui->energy_cost_chart, point_count);
+    lv_chart_set_axis_tick(ui->energy_cost_chart, LV_CHART_AXIS_PRIMARY_X, 4, 2,
+                           tick_count, 1, true, 42);
     ui_set_bar_chart_float(ui->energy_cost_chart, ui->energy_cost_series,
-                           realtime->cost_24h, 24, 100.0f);
+                           realtime->cost_24h, point_count, 100.0f);
   }
 
   if (ui->energy_power_chart != NULL && ui->energy_power_series != NULL) {
+    lv_chart_set_point_count(ui->energy_power_chart, point_count);
+    lv_chart_set_axis_tick(ui->energy_power_chart, LV_CHART_AXIS_PRIMARY_X, 4, 2,
+                           tick_count, 1, true, 42);
     ui_set_line_chart_u32(ui->energy_power_chart, ui->energy_power_series,
-                          realtime->power_24h, 24);
+                          realtime->power_24h, point_count);
   }
 
   if (ui->energy_power_label != NULL) {
-    lv_label_set_text_fmt(ui->energy_power_label, "Now: %lu W",
-                          (unsigned long)realtime->power_w);
+    if (ui->energy_range == UI_RANGE_24H) {
+      lv_label_set_text_fmt(ui->energy_power_label, "Now: %lu W",
+                            (unsigned long)realtime->power_w);
+    } else {
+      lv_label_set_text_fmt(ui->energy_power_label, "Latest avg: %lu W",
+                            (unsigned long)realtime->power_w);
+    }
   }
 
   if (ui->energy_max_power_label != NULL) {
-    lv_label_set_text_fmt(ui->energy_max_power_label, "Max 24h: %lu W",
-                          (unsigned long)realtime->max_power_w_24h);
+    if (ui->energy_range == UI_RANGE_7D) {
+      lv_label_set_text_fmt(ui->energy_max_power_label, "Max 7d: %lu W",
+                            (unsigned long)realtime->max_power_w_24h);
+    } else if (ui->energy_range == UI_RANGE_30D) {
+      lv_label_set_text_fmt(ui->energy_max_power_label, "Max 30d: %lu W",
+                            (unsigned long)realtime->max_power_w_24h);
+    } else {
+      lv_label_set_text_fmt(ui->energy_max_power_label, "Max 24h: %lu W",
+                            (unsigned long)realtime->max_power_w_24h);
+    }
   }
 }
 /*--------------------------------------------------------------*/
@@ -283,6 +1001,8 @@ void ui_init(UI *_UI) {
   _UI->wifi_connecting_index = -1;
   _UI->forecast_view_mode = UI_VIEW_GRAPH;
   _UI->elpriser_view_mode = UI_VIEW_GRAPH;
+  _UI->forecast_range = UI_RANGE_24H;
+  _UI->energy_range = UI_RANGE_24H;
   snprintf(_UI->wifi_status, sizeof(_UI->wifi_status), "WiFi: Not connected");
   ESP_LOGI(TAG, "Initializing Figma UI...");
   ui_build_root(_UI);
@@ -471,6 +1191,8 @@ static lv_obj_t *ui_create_nav_button(lv_obj_t *_parent, const char *_text,
 static void ui_destroy_active_screen(UI *_UI) {
   if (!_UI || !_UI->active_screen)
     return;
+  ui_close_energy_detail(_UI);
+  ui_close_forecast_detail(_UI);
   lv_obj_del(_UI->active_screen);
   _UI->active_screen = NULL;
   _UI->screen_home = NULL;
@@ -488,6 +1210,23 @@ static void ui_destroy_active_screen(UI *_UI) {
   _UI->forecast_table = NULL;
   _UI->forecast_graph_btn = NULL;
   _UI->forecast_table_btn = NULL;
+  _UI->forecast_table_prev_btn = NULL;
+  _UI->forecast_table_next_btn = NULL;
+  _UI->forecast_table_page_label = NULL;
+  _UI->forecast_range_24h_btn = NULL;
+  _UI->forecast_range_7d_btn = NULL;
+  _UI->forecast_range_30d_btn = NULL;
+  _UI->forecast_x_axis_label = NULL;
+  _UI->forecast_y_axis_label = NULL;
+  _UI->forecast_temp_series = NULL;
+  _UI->forecast_detail_overlay = NULL;
+  _UI->forecast_detail_page1 = NULL;
+  _UI->forecast_detail_page2 = NULL;
+  _UI->forecast_detail_prev_btn = NULL;
+  _UI->forecast_detail_next_btn = NULL;
+  _UI->forecast_detail_page_label = NULL;
+  _UI->forecast_detail_page = 0;
+  _UI->forecast_table_page = 0;
   _UI->elpriser_chart = NULL;
   _UI->elpriser_table = NULL;
   _UI->elpriser_graph_btn = NULL;
@@ -497,9 +1236,15 @@ static void ui_destroy_active_screen(UI *_UI) {
   _UI->energy_power_chart = NULL;
   _UI->energy_power_label = NULL;
   _UI->energy_max_power_label = NULL;
+  _UI->energy_range_24h_btn = NULL;
+  _UI->energy_range_7d_btn = NULL;
+  _UI->energy_range_30d_btn = NULL;
+  _UI->energy_range_btn_row = NULL;
+  _UI->energy_range_notice_label = NULL;
   _UI->energy_kwh_series = NULL;
   _UI->energy_cost_series = NULL;
   _UI->energy_power_series = NULL;
+  _UI->energy_detail_overlay = NULL;
   _UI->wifi_pass_ta = NULL;
   _UI->wifi_status_label = NULL;
   _UI->wifi_connect_btn = NULL;
@@ -529,8 +1274,7 @@ static bool ui_facility_config_complete(const Facility_Config *cfg) {
     return false;
 
   return cfg->facility_name[0] != '\0' && cfg->lat[0] != '\0' &&
-         cfg->lon[0] != '\0' && cfg->energy_zone >= 1 &&
-         cfg->energy_zone <= 4;
+         cfg->lon[0] != '\0' && cfg->energy_zone >= 1 && cfg->energy_zone <= 4;
 }
 
 static void ui_setup_finish_if_complete(UI *_UI) {
@@ -594,7 +1338,8 @@ void ui_show_screen(UI *_UI, UI_Screen _screen) {
   ui_build_active_screen(_UI, _screen);
   ui_update_nav(_UI);
 
-  if (_screen == UI_SCREEN_ELPRISER && _UI->has_dashboard_data) {
+  if ((_screen == UI_SCREEN_FORECAST || _screen == UI_SCREEN_ELPRISER) &&
+      _UI->has_dashboard_data) {
     ui_set_dashboard_data(_UI, &_UI->cached_weather, &_UI->cached_electricity,
                           &_UI->cached_realtime);
   }
@@ -761,28 +1506,154 @@ static void ui_build_screen_home(UI *_UI) {
                         lv_color_hex(C_PURPLE));
 }
 
-static void ui_fill_chart(lv_obj_t *_chart, const int *_values, int _count,
-                          lv_color_t _color) {
-  lv_chart_set_type(_chart, LV_CHART_TYPE_LINE);
-  lv_chart_set_point_count(_chart, _count);
-  lv_chart_set_range(_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
-  lv_chart_set_div_line_count(_chart, 5, 8);
-  lv_obj_set_style_bg_color(_chart, lv_color_hex(C_CARD_DARK), 0);
-  lv_obj_set_style_border_color(_chart, lv_color_hex(C_BORDER), 0);
-  lv_obj_set_style_border_width(_chart, 1, 0);
-  lv_obj_set_style_radius(_chart, 8, 0);
-  lv_chart_series_t *ser =
-      lv_chart_add_series(_chart, _color, LV_CHART_AXIS_PRIMARY_Y);
-  for (int i = 0; i < _count; i++)
-    lv_chart_set_next_value(_chart, ser, _values[i]);
+static int ui_forecast_temp_min_scaled(const float *values) {
+  int min_v = (int)(values[0] * 10.0f);
+
+  for (int i = 1; i < UI_FORECAST_CHART_POINTS; i++) {
+    int v = (int)(values[i] * 10.0f);
+    if (v < min_v)
+      min_v = v;
+  }
+
+  return min_v;
+}
+
+static int ui_forecast_temp_max_scaled(const float *values) {
+  int max_v = (int)(values[0] * 10.0f);
+
+  for (int i = 1; i < UI_FORECAST_CHART_POINTS; i++) {
+    int v = (int)(values[i] * 10.0f);
+    if (v > max_v)
+      max_v = v;
+  }
+
+  return max_v;
+}
+
+static int ui_forecast_table_page_count(void) {
+  return (UI_FORECAST_CHART_POINTS + UI_FORECAST_TABLE_ROWS_PER_PAGE - 1) /
+         UI_FORECAST_TABLE_ROWS_PER_PAGE;
+}
+
+static void ui_update_forecast_table(UI *ui, const WeatherData *weather) {
+  if (!ui || !weather || !weather->valid || !ui->forecast_table)
+    return;
+
+  int page_count = ui_forecast_table_page_count();
+  if (ui->forecast_table_page < 0)
+    ui->forecast_table_page = 0;
+  if (ui->forecast_table_page >= page_count)
+    ui->forecast_table_page = page_count - 1;
+
+  char temp[16];
+  char rain[16];
+  char wind[16];
+  char solar[16];
+
+  lv_table_set_col_cnt(ui->forecast_table, 5);
+  lv_table_set_row_cnt(ui->forecast_table, UI_FORECAST_TABLE_ROWS_PER_PAGE + 1);
+  lv_table_set_cell_value(ui->forecast_table, 0, 0, "Time");
+  lv_table_set_cell_value(ui->forecast_table, 0, 1, "Temp");
+  lv_table_set_cell_value(ui->forecast_table, 0, 2, "Rain");
+  lv_table_set_cell_value(ui->forecast_table, 0, 3, "Wind");
+  lv_table_set_cell_value(ui->forecast_table, 0, 4, "Solar");
+
+  int start_hour = ui->forecast_table_page * UI_FORECAST_TABLE_ROWS_PER_PAGE;
+  for (int row = 0; row < UI_FORECAST_TABLE_ROWS_PER_PAGE; row++) {
+    int hour = start_hour + row;
+    if (hour >= UI_FORECAST_CHART_POINTS) {
+      lv_table_set_cell_value(ui->forecast_table, row + 1, 0, "");
+      lv_table_set_cell_value(ui->forecast_table, row + 1, 1, "");
+      lv_table_set_cell_value(ui->forecast_table, row + 1, 2, "");
+      lv_table_set_cell_value(ui->forecast_table, row + 1, 3, "");
+      lv_table_set_cell_value(ui->forecast_table, row + 1, 4, "");
+      continue;
+    }
+
+    snprintf(temp, sizeof(temp), "%.1fC", weather->temp_c_24h[hour]);
+    snprintf(rain, sizeof(rain), "%u%%", weather->rain_percent_24h[hour]);
+    snprintf(wind, sizeof(wind), "%.0f", weather->wind_kmh_24h[hour]);
+    snprintf(solar, sizeof(solar), "%u", weather->shortwave_wm2_24h[hour]);
+
+    lv_table_set_cell_value(ui->forecast_table, row + 1, 0,
+                            weather->time_24h[hour]);
+    lv_table_set_cell_value(ui->forecast_table, row + 1, 1, temp);
+    lv_table_set_cell_value(ui->forecast_table, row + 1, 2, rain);
+    lv_table_set_cell_value(ui->forecast_table, row + 1, 3, wind);
+    lv_table_set_cell_value(ui->forecast_table, row + 1, 4, solar);
+  }
+
+  if (ui->forecast_table_page_label) {
+    lv_label_set_text_fmt(ui->forecast_table_page_label, "%d / %d",
+                          ui->forecast_table_page + 1, page_count);
+  }
+
+  if (ui->forecast_table_prev_btn) {
+    if (ui->forecast_table_page == 0)
+      lv_obj_add_state(ui->forecast_table_prev_btn, LV_STATE_DISABLED);
+    else
+      lv_obj_clear_state(ui->forecast_table_prev_btn, LV_STATE_DISABLED);
+  }
+
+  if (ui->forecast_table_next_btn) {
+    if (ui->forecast_table_page >= page_count - 1)
+      lv_obj_add_state(ui->forecast_table_next_btn, LV_STATE_DISABLED);
+    else
+      lv_obj_clear_state(ui->forecast_table_next_btn, LV_STATE_DISABLED);
+  }
+
+  ui_apply_forecast_view(ui);
+}
+
+static void ui_update_forecast_data(UI *ui, const WeatherData *weather) {
+  if (!ui || !weather || !weather->valid)
+    return;
+
+  ui_update_forecast_range_buttons(ui);
+
+  if (ui->forecast_range != UI_RANGE_24H) {
+    if (ui->forecast_chart && ui->forecast_temp_series) {
+      lv_chart_set_range(ui->forecast_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 1);
+      for (int i = 0; i < UI_FORECAST_CHART_POINTS; i++) {
+        lv_chart_set_value_by_id(ui->forecast_chart, ui->forecast_temp_series,
+                                 i, 0);
+      }
+      lv_chart_refresh(ui->forecast_chart);
+    }
+
+    if (ui->forecast_table) {
+      lv_table_set_col_cnt(ui->forecast_table, 1);
+      lv_table_set_row_cnt(ui->forecast_table, 2);
+      lv_table_set_cell_value(ui->forecast_table, 0, 0,
+                              ui->forecast_range == UI_RANGE_7D ? "7 days"
+                                                                : "30 days");
+      lv_table_set_cell_value(ui->forecast_table, 1, 0,
+                              "Multi-day weather data unavailable");
+    }
+    ui_apply_forecast_view(ui);
+    return;
+  }
+
+  if (ui->forecast_chart && ui->forecast_temp_series) {
+    int min_v = ui_forecast_temp_min_scaled(weather->temp_c_24h) - 20;
+    int max_v = ui_forecast_temp_max_scaled(weather->temp_c_24h) + 20;
+
+    if (min_v == max_v)
+      max_v = min_v + 10;
+
+    lv_chart_set_range(ui->forecast_chart, LV_CHART_AXIS_PRIMARY_Y, min_v,
+                       max_v);
+    for (int i = 0; i < UI_FORECAST_CHART_POINTS; i++) {
+      lv_chart_set_value_by_id(ui->forecast_chart, ui->forecast_temp_series, i,
+                               (lv_coord_t)(weather->temp_c_24h[i] * 10.0f));
+    }
+    lv_chart_refresh(ui->forecast_chart);
+  }
+
+  ui_update_forecast_table(ui, weather);
 }
 
 static void ui_build_screen_forecast(UI *_UI) {
-  static const int temp[] = {2, 5, 8, 12, 16, 14, 10, 6};
-  const char *rows[][3] = {{"00:00", "2°C", "10%"},  {"03:00", "5°C", "20%"},
-                           {"06:00", "8°C", "40%"},  {"09:00", "12°C", "65%"},
-                           {"12:00", "16°C", "80%"}, {"15:00", "14°C", "60%"},
-                           {"18:00", "10°C", "25%"}, {"21:00", "6°C", "5%"}};
   _UI->screen_forecast = lv_obj_create(_UI->content);
   _UI->active_screen = _UI->screen_forecast;
   lv_obj_clear_flag(_UI->screen_forecast, LV_OBJ_FLAG_SCROLLABLE);
@@ -798,8 +1669,22 @@ static void ui_build_screen_forecast(UI *_UI) {
   lv_obj_center(panel);
   lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_t *title = ui_create_label(panel, "Forecast", lv_color_white());
+  lv_obj_t *title =
+      ui_create_label(panel, "Today's Forecast", lv_color_white());
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_t *subtitle =
+      ui_create_label(panel, "00:00-24:00, temperature", lv_color_hex(C_MUTED));
+  lv_obj_align(subtitle, LV_ALIGN_TOP_LEFT, 0, 26);
+  _UI->forecast_range_24h_btn = ui_create_range_button(
+      panel, "24h", UI_RANGE_24H, _UI, forecast_range_event_cb);
+  lv_obj_align(_UI->forecast_range_24h_btn, LV_ALIGN_TOP_RIGHT, -140, 0);
+  _UI->forecast_range_7d_btn = ui_create_range_button(
+      panel, "7d", UI_RANGE_7D, _UI, forecast_range_event_cb);
+  lv_obj_align(_UI->forecast_range_7d_btn, LV_ALIGN_TOP_RIGHT, -70, 0);
+  _UI->forecast_range_30d_btn = ui_create_range_button(
+      panel, "30d", UI_RANGE_30D, _UI, forecast_range_event_cb);
+  lv_obj_align(_UI->forecast_range_30d_btn, LV_ALIGN_TOP_RIGHT, 0, 0);
+  ui_update_forecast_range_buttons(_UI);
   _UI->forecast_table_btn =
       ui_create_button(panel, "Table", lv_color_hex(C_CARD));
   lv_obj_set_size(_UI->forecast_table_btn, 86, 38);
@@ -814,37 +1699,93 @@ static void ui_build_screen_forecast(UI *_UI) {
   lv_obj_add_event_cb(_UI->forecast_graph_btn, view_toggle_event_cb,
                       LV_EVENT_CLICKED, _UI);
   lv_obj_t *forecast_view_box = lv_obj_create(panel);
-  lv_obj_set_size(forecast_view_box, LV_PCT(100), 235);
-  lv_obj_align(forecast_view_box, LV_ALIGN_TOP_LEFT, 0, 66);
+  lv_obj_set_size(forecast_view_box, LV_PCT(100), 292);
+  lv_obj_align(forecast_view_box, LV_ALIGN_TOP_LEFT, 0, 62);
   lv_obj_set_style_bg_opa(forecast_view_box, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(forecast_view_box, 0, 0);
   lv_obj_set_style_pad_all(forecast_view_box, 0, 0);
   lv_obj_clear_flag(forecast_view_box, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(forecast_view_box, LV_SCROLLBAR_MODE_OFF);
 
+  _UI->forecast_y_axis_label =
+      ui_create_label(forecast_view_box, "Temp C", lv_color_hex(C_MUTED));
+  lv_obj_align(_UI->forecast_y_axis_label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  _UI->forecast_x_axis_label =
+      ui_create_label(forecast_view_box, "Time", lv_color_hex(C_MUTED));
+  lv_obj_align(_UI->forecast_x_axis_label, LV_ALIGN_BOTTOM_MID, 20, 0);
+
   _UI->forecast_chart = lv_chart_create(forecast_view_box);
-  lv_obj_set_size(_UI->forecast_chart, LV_PCT(100), 220);
-  lv_obj_align(_UI->forecast_chart, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_set_size(_UI->forecast_chart, 780, 250);
+  lv_obj_align(_UI->forecast_chart, LV_ALIGN_TOP_LEFT, 62, 8);
   lv_obj_clear_flag(_UI->forecast_chart, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(_UI->forecast_chart, LV_SCROLLBAR_MODE_OFF);
-  ui_fill_chart(_UI->forecast_chart, temp, 8, lv_color_hex(C_BLUE));
+  ui_style_chart(_UI->forecast_chart);
+  lv_obj_set_style_pad_left(_UI->forecast_chart, 10, LV_PART_TICKS);
+  lv_obj_set_style_pad_bottom(_UI->forecast_chart, 8, LV_PART_TICKS);
+  lv_obj_set_ext_click_area(_UI->forecast_chart, 8);
+  lv_chart_set_type(_UI->forecast_chart, LV_CHART_TYPE_LINE);
+  lv_chart_set_point_count(_UI->forecast_chart, UI_FORECAST_CHART_POINTS);
+  lv_chart_set_range(_UI->forecast_chart, LV_CHART_AXIS_PRIMARY_Y, -200, 300);
+  lv_chart_set_axis_tick(_UI->forecast_chart, LV_CHART_AXIS_PRIMARY_X, 4, 2,
+                         UI_FORECAST_TIME_TICKS, 1, true, 36);
+  lv_chart_set_axis_tick(_UI->forecast_chart, LV_CHART_AXIS_PRIMARY_Y, 4, 2, 5,
+                         1, true, 46);
+  lv_obj_add_event_cb(_UI->forecast_chart, forecast_axis_draw_cb,
+                      LV_EVENT_DRAW_PART_BEGIN, _UI);
+  lv_obj_add_event_cb(_UI->forecast_chart, forecast_chart_event_cb,
+                      LV_EVENT_VALUE_CHANGED, _UI);
+  _UI->forecast_temp_series = lv_chart_add_series(
+      _UI->forecast_chart, lv_color_hex(C_BLUE), LV_CHART_AXIS_PRIMARY_Y);
 
   _UI->forecast_table = lv_table_create(forecast_view_box);
-  lv_obj_set_size(_UI->forecast_table, LV_PCT(100), 220);
-  lv_obj_align(_UI->forecast_table, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_set_size(_UI->forecast_table, 760, 250);
+  lv_obj_align(_UI->forecast_table, LV_ALIGN_TOP_LEFT, 0, 8);
   lv_obj_clear_flag(_UI->forecast_table, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(_UI->forecast_table, LV_SCROLLBAR_MODE_OFF);
-  lv_table_set_col_cnt(_UI->forecast_table, 3);
-  lv_table_set_row_cnt(_UI->forecast_table, 9);
+  lv_table_set_col_cnt(_UI->forecast_table, 5);
+  lv_table_set_row_cnt(_UI->forecast_table,
+                       UI_FORECAST_TABLE_ROWS_PER_PAGE + 1);
   lv_table_set_cell_value(_UI->forecast_table, 0, 0, "Time");
   lv_table_set_cell_value(_UI->forecast_table, 0, 1, "Temp");
-  lv_table_set_cell_value(_UI->forecast_table, 0, 2, "Solar");
-  for (int i = 0; i < 8; i++) {
-    for (int j = 0; j < 3; j++) {
-      lv_table_set_cell_value(_UI->forecast_table, i + 1, j, rows[i][j]);
-    }
+  lv_table_set_cell_value(_UI->forecast_table, 0, 2, "Rain");
+  lv_table_set_cell_value(_UI->forecast_table, 0, 3, "Wind");
+  lv_table_set_cell_value(_UI->forecast_table, 0, 4, "Solar");
+  for (int i = 1; i <= UI_FORECAST_TABLE_ROWS_PER_PAGE; i++) {
+    lv_table_set_cell_value(_UI->forecast_table, i, 0, "--:--");
+    lv_table_set_cell_value(_UI->forecast_table, i, 1, "--");
+    lv_table_set_cell_value(_UI->forecast_table, i, 2, "--");
+    lv_table_set_cell_value(_UI->forecast_table, i, 3, "--");
+    lv_table_set_cell_value(_UI->forecast_table, i, 4, "--");
   }
   lv_obj_add_flag(_UI->forecast_table, LV_OBJ_FLAG_HIDDEN);
+
+  _UI->forecast_table_prev_btn =
+      ui_create_button(forecast_view_box, LV_SYMBOL_UP, lv_color_hex(C_CARD));
+  lv_obj_set_size(_UI->forecast_table_prev_btn, 44, 40);
+  lv_obj_align(_UI->forecast_table_prev_btn, LV_ALIGN_TOP_RIGHT, 0, 24);
+  lv_obj_add_event_cb(_UI->forecast_table_prev_btn,
+                      forecast_table_page_event_cb, LV_EVENT_CLICKED, _UI);
+  lv_obj_set_user_data(_UI->forecast_table_prev_btn, (void *)(uintptr_t)0);
+  lv_obj_add_flag(_UI->forecast_table_prev_btn, LV_OBJ_FLAG_HIDDEN);
+
+  _UI->forecast_table_next_btn =
+      ui_create_button(forecast_view_box, LV_SYMBOL_DOWN, lv_color_hex(C_CARD));
+  lv_obj_set_size(_UI->forecast_table_next_btn, 44, 40);
+  lv_obj_align(_UI->forecast_table_next_btn, LV_ALIGN_BOTTOM_RIGHT, 0, -24);
+  lv_obj_add_event_cb(_UI->forecast_table_next_btn,
+                      forecast_table_page_event_cb, LV_EVENT_CLICKED, _UI);
+  lv_obj_set_user_data(_UI->forecast_table_next_btn, (void *)(uintptr_t)1);
+  lv_obj_add_flag(_UI->forecast_table_next_btn, LV_OBJ_FLAG_HIDDEN);
+
+  _UI->forecast_table_page_label =
+      ui_create_label(forecast_view_box, "1 / 6", lv_color_hex(C_MUTED));
+  lv_obj_align(_UI->forecast_table_page_label, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_add_flag(_UI->forecast_table_page_label, LV_OBJ_FLAG_HIDDEN);
+
+  if (_UI->has_dashboard_data) {
+    ui_update_forecast_data(_UI, &_UI->cached_weather);
+  }
 }
 
 static void ui_build_screen_elpriser(UI *_UI) {
@@ -863,8 +1804,31 @@ static void ui_build_screen_elpriser(UI *_UI) {
   lv_obj_center(panel);
   lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_t *title = ui_create_label(panel, "Energy last 24h", lv_color_white());
+  lv_obj_t *title = ui_create_label(panel, "Energy", lv_color_white());
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  _UI->energy_range_btn_row = lv_obj_create(panel);
+  lv_obj_set_size(_UI->energy_range_btn_row, 188, 32);
+  lv_obj_align(_UI->energy_range_btn_row, LV_ALIGN_TOP_RIGHT, 0, 58);
+  lv_obj_set_style_bg_opa(_UI->energy_range_btn_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(_UI->energy_range_btn_row, 0, 0);
+  lv_obj_set_style_pad_all(_UI->energy_range_btn_row, 0, 0);
+  lv_obj_set_style_pad_column(_UI->energy_range_btn_row, 10, 0);
+  lv_obj_set_layout(_UI->energy_range_btn_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(_UI->energy_range_btn_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(_UI->energy_range_btn_row, LV_FLEX_ALIGN_END,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(_UI->energy_range_btn_row, LV_OBJ_FLAG_SCROLLABLE);
+
+  _UI->energy_range_24h_btn = ui_create_range_button(
+      _UI->energy_range_btn_row, "24h", UI_RANGE_24H, _UI,
+      energy_range_event_cb);
+  _UI->energy_range_7d_btn = ui_create_range_button(_UI->energy_range_btn_row,
+                                                    "7d", UI_RANGE_7D, _UI,
+                                                    energy_range_event_cb);
+  _UI->energy_range_30d_btn = ui_create_range_button(
+      _UI->energy_range_btn_row, "30d", UI_RANGE_30D, _UI,
+      energy_range_event_cb);
 
   _UI->energy_power_label =
       ui_create_label(panel, "Now: -- W", lv_color_hex(C_GREEN));
@@ -875,7 +1839,7 @@ static void ui_build_screen_elpriser(UI *_UI) {
   lv_obj_align(_UI->energy_max_power_label, LV_ALIGN_TOP_RIGHT, 0, 28);
 
   lv_obj_t *kwh_label =
-      ui_create_label(panel, "Consumption / h, kWh", lv_color_hex(C_MUTED));
+      ui_create_label(panel, "Consumption, kWh", lv_color_hex(C_MUTED));
   lv_obj_align(kwh_label, LV_ALIGN_TOP_LEFT, 0, 54);
 
   _UI->energy_kwh_chart = lv_chart_create(panel);
@@ -885,9 +1849,13 @@ static void ui_build_screen_elpriser(UI *_UI) {
   lv_chart_set_type(_UI->energy_kwh_chart, LV_CHART_TYPE_BAR);
   _UI->energy_kwh_series = lv_chart_add_series(
       _UI->energy_kwh_chart, lv_color_hex(C_GREEN), LV_CHART_AXIS_PRIMARY_Y);
+  lv_obj_set_user_data(_UI->energy_kwh_chart,
+                       (void *)(uintptr_t)UI_ENERGY_DETAIL_CONSUMPTION);
+  lv_obj_add_event_cb(_UI->energy_kwh_chart, energy_chart_event_cb,
+                      LV_EVENT_VALUE_CHANGED, _UI);
 
   lv_obj_t *cost_label =
-      ui_create_label(panel, "Cost / h, SEK", lv_color_hex(C_MUTED));
+      ui_create_label(panel, "Cost, SEK", lv_color_hex(C_MUTED));
   lv_obj_align(cost_label, LV_ALIGN_TOP_RIGHT, -300, 54);
 
   _UI->energy_cost_chart = lv_chart_create(panel);
@@ -897,9 +1865,13 @@ static void ui_build_screen_elpriser(UI *_UI) {
   lv_chart_set_type(_UI->energy_cost_chart, LV_CHART_TYPE_BAR);
   _UI->energy_cost_series = lv_chart_add_series(
       _UI->energy_cost_chart, lv_color_hex(C_YELLOW), LV_CHART_AXIS_PRIMARY_Y);
+  lv_obj_set_user_data(_UI->energy_cost_chart,
+                       (void *)(uintptr_t)UI_ENERGY_DETAIL_COST);
+  lv_obj_add_event_cb(_UI->energy_cost_chart, energy_chart_event_cb,
+                      LV_EVENT_VALUE_CHANGED, _UI);
 
   lv_obj_t *power_label =
-      ui_create_label(panel, "Power last 24h, W", lv_color_hex(C_MUTED));
+      ui_create_label(panel, "Average power, W", lv_color_hex(C_MUTED));
   lv_obj_align(power_label, LV_ALIGN_TOP_LEFT, 0, 242);
 
   _UI->energy_power_chart = lv_chart_create(panel);
@@ -909,6 +1881,18 @@ static void ui_build_screen_elpriser(UI *_UI) {
   lv_chart_set_type(_UI->energy_power_chart, LV_CHART_TYPE_LINE);
   _UI->energy_power_series = lv_chart_add_series(
       _UI->energy_power_chart, lv_color_hex(C_BLUE), LV_CHART_AXIS_PRIMARY_Y);
+  lv_obj_set_user_data(_UI->energy_power_chart,
+                       (void *)(uintptr_t)UI_ENERGY_DETAIL_POWER);
+  lv_obj_add_event_cb(_UI->energy_power_chart, energy_chart_event_cb,
+                      LV_EVENT_VALUE_CHANGED, _UI);
+
+  _UI->energy_range_notice_label =
+      ui_create_label(panel, "", lv_color_hex(C_MUTED));
+  lv_obj_set_width(_UI->energy_range_notice_label, LV_PCT(100));
+  lv_label_set_long_mode(_UI->energy_range_notice_label, LV_LABEL_LONG_WRAP);
+  lv_obj_align(_UI->energy_range_notice_label, LV_ALIGN_CENTER, 0, 20);
+  lv_obj_add_flag(_UI->energy_range_notice_label, LV_OBJ_FLAG_HIDDEN);
+  ui_update_energy_range_view(_UI);
 }
 
 static void ui_create_settings_card(UI *_UI, lv_obj_t *_parent, lv_obj_t **_out,
@@ -984,18 +1968,16 @@ static void ui_build_screen_wifi(UI *_UI) {
   lv_obj_set_size(_UI->back_btn, 48, 48);
   lv_obj_align(_UI->back_btn, LV_ALIGN_TOP_LEFT, 0, 0);
   lv_obj_add_event_cb(_UI->back_btn, back_event_cb, LV_EVENT_CLICKED, _UI);
-  lv_obj_t *title =
-      ui_create_label(panel,
-                      _UI->setup_wizard_active ? "Setup: WiFi"
-                                               : "WiFi Configuration",
-                      lv_color_white());
+  lv_obj_t *title = ui_create_label(
+      panel, _UI->setup_wizard_active ? "Setup: WiFi" : "WiFi Configuration",
+      lv_color_white());
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 70, 0);
-  lv_obj_t *sub = ui_create_label(
-      panel,
-      _UI->setup_wizard_active
-          ? "Connect this device to a network before continuing"
-          : "Configure network settings",
-      lv_color_hex(C_MUTED));
+  lv_obj_t *sub =
+      ui_create_label(panel,
+                      _UI->setup_wizard_active
+                          ? "Connect this device to a network before continuing"
+                          : "Configure network settings",
+                      lv_color_hex(C_MUTED));
   lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 70, 28);
   lv_obj_t *connected = lv_obj_create(panel);
   lv_obj_set_size(connected, LV_PCT(100), 62);
@@ -1130,11 +2112,10 @@ static void ui_build_screen_facility(UI *_UI) {
   if (_UI->setup_wizard_active) {
     lv_obj_add_flag(_UI->back_btn, LV_OBJ_FLAG_HIDDEN);
   }
-  lv_obj_t *title =
-      ui_create_label(panel,
-                      _UI->setup_wizard_active ? "Setup: Facility"
-                                               : "Facility Configuration",
-                      lv_color_white());
+  lv_obj_t *title = ui_create_label(
+      panel,
+      _UI->setup_wizard_active ? "Setup: Facility" : "Facility Configuration",
+      lv_color_white());
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 70, 0);
   _UI->facility_form = lv_obj_create(panel);
   lv_obj_set_size(_UI->facility_form, LV_PCT(100), 260);
@@ -1285,24 +2266,19 @@ static void view_toggle_event_cb(lv_event_t *_event) {
     return;
   if (target == _UI->forecast_graph_btn || target == _UI->forecast_table_btn) {
     bool table = target == _UI->forecast_table_btn;
+    _UI->forecast_view_mode = table ? UI_VIEW_TABLE : UI_VIEW_GRAPH;
     if (table) {
-      lv_obj_add_flag(_UI->forecast_chart, LV_OBJ_FLAG_HIDDEN);
-      lv_obj_clear_flag(_UI->forecast_table, LV_OBJ_FLAG_HIDDEN);
-      lv_obj_set_style_bg_color(_UI->forecast_table_btn, lv_color_hex(C_BLUE),
-                                0);
-      lv_obj_set_style_bg_color(_UI->forecast_graph_btn, lv_color_hex(C_CARD),
-                                0);
+      if (_UI->has_dashboard_data)
+        ui_update_forecast_table(_UI, &_UI->cached_weather);
     } else {
-      lv_obj_clear_flag(_UI->forecast_chart, LV_OBJ_FLAG_HIDDEN);
-      lv_obj_add_flag(_UI->forecast_table, LV_OBJ_FLAG_HIDDEN);
-      lv_obj_set_style_bg_color(_UI->forecast_graph_btn, lv_color_hex(C_BLUE),
-                                0);
-      lv_obj_set_style_bg_color(_UI->forecast_table_btn, lv_color_hex(C_CARD),
-                                0);
+      ui_apply_forecast_view(_UI);
     }
+    ui_set_range_btn_state(_UI->forecast_graph_btn, !table);
+    ui_set_range_btn_state(_UI->forecast_table_btn, table);
   } else if (target == _UI->elpriser_graph_btn ||
              target == _UI->elpriser_table_btn) {
     bool table = target == _UI->elpriser_table_btn;
+    _UI->elpriser_view_mode = table ? UI_VIEW_TABLE : UI_VIEW_GRAPH;
     if (table) {
       lv_obj_add_flag(_UI->elpriser_chart, LV_OBJ_FLAG_HIDDEN);
       lv_obj_clear_flag(_UI->elpriser_table, LV_OBJ_FLAG_HIDDEN);
@@ -1318,6 +2294,117 @@ static void view_toggle_event_cb(lv_event_t *_event) {
       lv_obj_set_style_bg_color(_UI->elpriser_table_btn, lv_color_hex(C_CARD),
                                 0);
     }
+  }
+}
+
+static void forecast_chart_event_cb(lv_event_t *_event) {
+  UI *ui = lv_event_get_user_data(_event);
+  lv_obj_t *chart = lv_event_get_target(_event);
+  if (!ui || !chart)
+    return;
+
+  if (ui->forecast_range != UI_RANGE_24H)
+    return;
+
+  uint32_t point = lv_chart_get_pressed_point(chart);
+  if (point == LV_CHART_POINT_NONE || point >= UI_FORECAST_CHART_POINTS)
+    return;
+
+  ui_show_forecast_detail(ui, point);
+}
+
+static void forecast_range_event_cb(lv_event_t *_event) {
+  UI *ui = lv_event_get_user_data(_event);
+  lv_obj_t *btn = lv_event_get_target(_event);
+  if (!ui || !btn)
+    return;
+
+  ui->forecast_range = (UI_Range)(uintptr_t)lv_obj_get_user_data(btn);
+  ui->forecast_table_page = 0;
+  ui_update_forecast_data(ui, &ui->cached_weather);
+  if (ui->forecast_range == UI_RANGE_24H && ui->forecast_table &&
+      !lv_obj_has_flag(ui->forecast_table, LV_OBJ_FLAG_HIDDEN)) {
+    if (ui->forecast_table_prev_btn)
+      lv_obj_clear_flag(ui->forecast_table_prev_btn, LV_OBJ_FLAG_HIDDEN);
+    if (ui->forecast_table_next_btn)
+      lv_obj_clear_flag(ui->forecast_table_next_btn, LV_OBJ_FLAG_HIDDEN);
+    if (ui->forecast_table_page_label)
+      lv_obj_clear_flag(ui->forecast_table_page_label, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+static void energy_range_event_cb(lv_event_t *_event) {
+  UI *ui = lv_event_get_user_data(_event);
+  lv_obj_t *btn = lv_event_get_target(_event);
+  if (!ui || !btn)
+    return;
+
+  ui->energy_range = (UI_Range)(uintptr_t)lv_obj_get_user_data(btn);
+  ui_update_energy_range_view(ui);
+  dashboard_data_request_energy_range(
+      (DashboardEnergyRange)ui->energy_range);
+}
+
+static void forecast_detail_close_event_cb(lv_event_t *_event) {
+  UI *ui = lv_event_get_user_data(_event);
+  ui_close_forecast_detail(ui);
+}
+
+static void forecast_detail_page_event_cb(lv_event_t *_event) {
+  UI *ui = lv_event_get_user_data(_event);
+  lv_obj_t *btn = lv_event_get_target(_event);
+  if (!ui || !btn)
+    return;
+
+  int page = (int)(uintptr_t)lv_obj_get_user_data(btn);
+  ui_set_forecast_detail_page(ui, page);
+}
+
+static void forecast_table_page_event_cb(lv_event_t *_event) {
+  UI *ui = lv_event_get_user_data(_event);
+  lv_obj_t *btn = lv_event_get_target(_event);
+  if (!ui || !btn)
+    return;
+
+  int direction = (int)(uintptr_t)lv_obj_get_user_data(btn);
+  if (direction == 0)
+    ui->forecast_table_page--;
+  else
+    ui->forecast_table_page++;
+
+  ui_update_forecast_table(ui, &ui->cached_weather);
+}
+
+static void energy_chart_event_cb(lv_event_t *_event) {
+  UI *ui = lv_event_get_user_data(_event);
+  lv_obj_t *chart = lv_event_get_target(_event);
+  if (!ui || !chart)
+    return;
+
+  uint32_t point = lv_chart_get_pressed_point(chart);
+  if (point == LV_CHART_POINT_NONE || point >= (uint32_t)ui_energy_point_count(ui))
+    return;
+
+  UI_EnergyDetailKind kind =
+      (UI_EnergyDetailKind)(uintptr_t)lv_obj_get_user_data(chart);
+  ui_show_energy_detail(ui, kind, point);
+}
+
+static void energy_detail_close_event_cb(lv_event_t *_event) {
+  UI *ui = lv_event_get_user_data(_event);
+  ui_close_energy_detail(ui);
+}
+
+static void energy_detail_info_event_cb(lv_event_t *_event) {
+  lv_obj_t *btn = lv_event_get_target(_event);
+  lv_obj_t *info_box = btn ? lv_obj_get_user_data(btn) : NULL;
+  if (!info_box)
+    return;
+
+  if (lv_obj_has_flag(info_box, LV_OBJ_FLAG_HIDDEN)) {
+    lv_obj_clear_flag(info_box, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(info_box, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -1433,9 +2520,8 @@ static void ui_open_wifi_password(UI *_UI, int _idx) {
   lv_checkbox_set_text(_UI->wifi_show_password_cb, "Show password");
   lv_obj_set_style_text_color(_UI->wifi_show_password_cb, lv_color_white(), 0);
   lv_obj_align(_UI->wifi_show_password_cb, LV_ALIGN_TOP_LEFT, 0, 104);
-  lv_obj_add_event_cb(_UI->wifi_show_password_cb,
-                      wifi_show_password_event_cb, LV_EVENT_VALUE_CHANGED,
-                      _UI);
+  lv_obj_add_event_cb(_UI->wifi_show_password_cb, wifi_show_password_event_cb,
+                      LV_EVENT_VALUE_CHANGED, _UI);
 
   lv_obj_t *cancel = ui_create_button(_UI->wifi_password_panel, "Cancel",
                                       lv_color_hex(0x374151));

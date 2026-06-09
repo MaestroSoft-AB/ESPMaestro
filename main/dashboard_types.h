@@ -3,18 +3,30 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define DASHBOARD_ENERGY_MAX_POINTS 30
+
 typedef struct {
   bool valid;
   float outdoor_c;
   float indoor_c;
   char summary[32];
+  float temp_c_24h[24];
+  uint8_t rain_percent_24h[24];
+  uint16_t weather_code_24h[24];
+  uint16_t shortwave_wm2_24h[24];
+  float wind_kmh_24h[24];
+  char time_24h[24][6];
   uint32_t updated_epoch;
 } WeatherData;
 
 typedef struct {
   bool valid;
   float current_sek_kwh;
-  float sek_24h[24];
+  float sek_24h[DASHBOARD_ENERGY_MAX_POINTS];
+  uint8_t point_count;
+  uint16_t interval_minutes;
+  char labels[DASHBOARD_ENERGY_MAX_POINTS][6];
+  bool has_data[DASHBOARD_ENERGY_MAX_POINTS];
   uint32_t updated_epoch;
 } ElectricityData;
 
@@ -25,9 +37,13 @@ typedef struct {
   float current_kwh;
   float current_sek_h;
 
-  uint32_t power_24h[24];
-  float kwh_24h[24];
-  float cost_24h[24];
+  uint32_t power_24h[DASHBOARD_ENERGY_MAX_POINTS];
+  float kwh_24h[DASHBOARD_ENERGY_MAX_POINTS];
+  float cost_24h[DASHBOARD_ENERGY_MAX_POINTS];
+  uint8_t point_count;
+  uint16_t interval_minutes;
+  char labels[DASHBOARD_ENERGY_MAX_POINTS][6];
+  bool has_data[DASHBOARD_ENERGY_MAX_POINTS];
 
   uint32_t updated_epoch;
 } RealtimeData;
