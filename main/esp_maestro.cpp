@@ -2,6 +2,7 @@
 /* Copyright MaestroSoft Corp AB Inc LLC Unlimited. */
 #include "bme280_sensor.hpp"
 extern "C" {
+#include "cli.h"
 #include "i2c.h"
 }
 #include "dashboard_data.hpp"
@@ -149,6 +150,8 @@ static void live_power_task(void *arg) {
 
 extern "C" void app_main(void) {
 
+  esp_log_level_set("*", ESP_LOG_ERROR);
+
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
       err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -201,6 +204,8 @@ extern "C" void app_main(void) {
     ESP_LOGE(TAG, "Failed to init wifi manager");
     return;
   }
+
+  cli_init();
 
   bool missing_wifi = !wifi_handler_has_saved_config();
   bool missing_facility = !facility_config_is_configured();
