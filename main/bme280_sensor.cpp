@@ -6,6 +6,10 @@
 #include <string.h>
 #include <time.h>
 
+#define BME280_RETRY_MS 1000
+#define BME280_TASK_STACK 4096
+#define BME280_TASK_PRIORITY 2
+
 static const char *TAG = "bme280";
 
 bool bme280::init(i2c_master_bus_handle_t bus) {
@@ -172,31 +176,19 @@ void bme280::delay_us(uint32_t period, void *intf_ptr) {
   esp_rom_delay_us(period);
 }
 
-bool bme280::start_api_task(uint32_t interval_ms) {
-  if (!initialized_) {
-    ESP_LOGE(TAG, "Cannot start BME280 api task before init");
-    return false;
-  }
-
+bool bme280::start(i2c_master_bus_handle_t bus, uint32_t interval_ms) {
   if (api_task_ != nullptr) {
     return true;
   }
 
+  bus_ = bus;
   api_interval_ms_ = interval_ms;
 
-  BaseType_t ok = xTaskCreate(bme280::api_task_entry, "bme280_api_task", 4096,
-                              this, 1, &api_task_);
-
-  if (ok != pdPASS) {
-    ESP_LOGE(TAG, "Failed to create BME280 api task");
-    api_task_ = nullptr;
-    return false;
-  }
-
-  return true;
+  return xTaskCreate(api_task_entry, "bme280", BME280_TASK_STACK, this,
+                     BME280_TASK_PRIORITY, &api_task_) == pdPASS;
 }
 
-void bme280::stop_api_task() {
+void bme280::stop() {
   if (api_task_ != nullptr) {
     vTaskDelete(api_task_);
     api_task_ = nullptr;
@@ -204,14 +196,16 @@ void bme280::stop_api_task() {
 }
 
 void bme280::api_task_entry(void *arg) {
-  auto *self = static_cast<bme280 *>(arg);
+  bme280 *self = static_cast<bme280 *>(arg);
 
-  if (self == nullptr) {
-    vTaskDelete(nullptr);
-    return;
-  }
+  while (1) {
+    if (!self->initialized_) {
+      if (!self->init(self->bus_)) {
+        vTaskDelay(pdMS_TO_TICKS(BME280_RETRY_MS));
+        continue;
+      }
+    }
 
-  while (true) {
     self->read();
     vTaskDelay(pdMS_TO_TICKS(self->api_interval_ms_));
   }

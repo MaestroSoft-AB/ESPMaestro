@@ -100,39 +100,6 @@ static bool fetch_live_power(uint32_t *power_w_out) {
   return ok;
 }
 
-static void bme280_test_task(void *arg) {
-  DH *ctx = static_cast<DH *>(arg);
-
-  if (ctx == nullptr || ctx->i2c.bus == nullptr) {
-    ESP_LOGE("BME280_TEST", "Missing I2C bus");
-    vTaskDelete(NULL);
-    return;
-  }
-
-  bme280 sensor;
-
-  if (!sensor.init(ctx->i2c.bus)) {
-    ESP_LOGE("BME280_TEST", "Failed to init BME280");
-    vTaskDelete(NULL);
-    return;
-  }
-
-  while (true) {
-    if (sensor.read()) {
-      bme280_reading reading = {};
-
-      if (sensor.latest(&reading)) {
-        ESP_LOGI("BME280_TEST", "T=%.2f C | RH=%.2f %% | P=%.2f hPa",
-                 reading.temperature_c, reading.humidity_rh,
-                 reading.pressure_hpa);
-        display_handler_update_indoor_climate(
-            reading.temperature_c, reading.pressure_hpa, reading.humidity_rh);
-      }
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(2000));
-  }
-}
 static bme280 sensor;
 
 static void live_power_task(void *arg) {
@@ -180,23 +147,20 @@ extern "C" void app_main(void) {
                     3, NULL) != pdPASS) {
       ESP_LOGE(TAG, "Failed to create display_handler_work task");
     }
-    if (!sensor.init(display_context.i2c.bus)) {
-      ESP_LOGE(TAG, "Failed to init BME280");
+
+    sensor.start(display_context.i2c.bus, 2000);
+
+    if (scheduler_init() != 0) {
+      ESP_LOGE(TAG, "Failed to init scheduler");
     } else {
-      sensor.start_api_task(2000);
+      if (xTaskCreate(scheduler_task, "scheduler_task", 4096, NULL, 1, NULL) !=
+          pdPASS) {
+        ESP_LOGE(TAG, "Failed to create scheduler_task");
+      }
     }
     if (xTaskCreate(live_power_task, "live_power_task", 6144, NULL, 1, NULL) !=
         pdPASS) {
       ESP_LOGE(TAG, "Failed to create live_power_task");
-    }
-  }
-
-  if (scheduler_init() != 0) {
-    ESP_LOGE(TAG, "Failed to init scheduler");
-  } else {
-    if (xTaskCreate(scheduler_task, "scheduler_task", 4096, NULL, 1, NULL) !=
-        pdPASS) {
-      ESP_LOGE(TAG, "Failed to create scheduler_task");
     }
   }
 
@@ -218,7 +182,8 @@ extern "C" void app_main(void) {
   }
 
   static DashboardData dashboard_data;
-  static UiStatus uistatus;
+  static UiStatus uistatus(&sensor);
+}
 }
 
 /*
