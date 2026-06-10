@@ -4,29 +4,23 @@
 #include "display_handler.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_log.h"
-#include "freertos/projdefs.h"
 #include "freertos/task.h"
 #include "gpio.h"
 #include "gt911.h"
 #include "i2c.h"
 #include "io_extension.h"
 #include "lvgl_port.h"
-#include "misc/lv_color.h"
 #include "rgb_lcd_port.h"
 #include "ui.h"
-#include "widgets/lv_label.h"
 #include "wifi_handler.h"
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 /* --------------------------------------------------------------- */
 static DH g_dh = {0};
 static esp_lcd_panel_io_handle_t touch_io_handle = NULL;
 static UI g_ui;
 static const char *TAG = "display_handler";
-
-extern const lv_font_t notosans_14;
 
 static esp_lcd_panel_handle_t panel_handle = NULL;
 static esp_lcd_touch_handle_t tp_handle = NULL;

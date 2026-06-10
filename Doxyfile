@@ -1034,7 +1034,8 @@ INPUT                  = \
     main/display_handler.h \
     main/wifi_handler.h \
     main/facility_config.h \
-    main/ntp_clock.hpp
+    main/ntp_clock.hpp \
+    main/cli.h
 
 # This tag can be used to specify the character encoding of the source files
 # that Doxygen parses. Internally Doxygen uses the UTF-8 encoding. Doxygen uses

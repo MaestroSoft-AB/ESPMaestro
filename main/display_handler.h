@@ -13,12 +13,6 @@
 /* Lazy calc on 14px mono font on 1024x600 display */
 #define DISPLAY_SIZE_HEIGHT 600
 
-/** @brief Estimated maximum number of monospace 14 px characters per row. */
-#define DISPLAY_MAX_CHAR_PER_ROW 73
-
-/** @brief Estimated maximum number of monospace 14 px text rows on the display.
- */
-#define DISPLAY_MAX_CHAR_ROWS 42
 #include "i2c.h"
 
 #ifdef __cplusplus
