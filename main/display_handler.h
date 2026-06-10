@@ -98,6 +98,7 @@ typedef struct {
  * @brief Buffered BME280 environmental reading used by the display handler.
  */
 typedef struct {
+  bool has_indoor_climate;
   bool indoor_climate_ready;
   float temperature_c;
   float pressure_hpa;

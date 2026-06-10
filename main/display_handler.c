@@ -13,6 +13,7 @@
 #include "rgb_lcd_port.h"
 #include "ui.h"
 #include "wifi_handler.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -40,6 +41,7 @@ static DH_indoor_climate_status g_indoor_climate_status = {0};
 static SemaphoreHandle_t g_indoor_climate_mutex = NULL;
 
 static struct {
+  bool has_value;
   bool ready;
   uint32_t power_w;
 } g_live_power_status = {0};
@@ -196,6 +198,18 @@ void display_handler_update_bme280(float temp, float humidity, float hpa) {
     return;
 
   if (xSemaphoreTake(g_indoor_climate_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    bool changed =
+        !g_indoor_climate_status.has_indoor_climate ||
+        fabsf(g_indoor_climate_status.temperature_c - temp) >= 0.1f ||
+        fabsf(g_indoor_climate_status.pressure_hpa - hpa) >= 0.1f ||
+        fabsf(g_indoor_climate_status.humidity_rh - humidity) >= 0.1f;
+
+    if (!changed) {
+      xSemaphoreGive(g_indoor_climate_mutex);
+      return;
+    }
+
+    g_indoor_climate_status.has_indoor_climate = true;
     g_indoor_climate_status.temperature_c = temp;
     g_indoor_climate_status.pressure_hpa = hpa;
     g_indoor_climate_status.humidity_rh = humidity;
@@ -237,6 +251,12 @@ void display_handler_update_live_power(uint32_t power_w) {
     return;
 
   if (xSemaphoreTake(g_live_power_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    if (g_live_power_status.has_value && g_live_power_status.power_w == power_w) {
+      xSemaphoreGive(g_live_power_mutex);
+      return;
+    }
+
+    g_live_power_status.has_value = true;
     g_live_power_status.power_w = power_w;
     g_live_power_status.ready = true;
     xSemaphoreGive(g_live_power_mutex);

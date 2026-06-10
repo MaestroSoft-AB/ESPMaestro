@@ -119,14 +119,8 @@ typedef struct {
 
   lv_obj_t *nav_clock_label;
   lv_obj_t *nav_date_label;
-  lv_obj_t *home_time_value_label;
-  lv_obj_t *home_time_sub_label;
-  lv_obj_t *home_status_value_label;
-  lv_obj_t *home_status_sub_label;
   lv_obj_t *home_outdoor_value_label;
   lv_obj_t *home_outdoor_sub_label;
-  lv_obj_t *home_forecast_value_label;
-  lv_obj_t *home_forecast_sub_label;
   lv_obj_t *home_price_value_label;
   lv_obj_t *home_price_sub_label;
   lv_obj_t *home_meter_value_label;

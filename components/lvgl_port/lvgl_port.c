@@ -92,17 +92,10 @@ IRAM_ATTR static void rotate_copy_pixel(const uint16_t *from, uint16_t *to,
 
 // Structure to store information about dirty areas that need refreshing
 typedef struct {
-<<<<<<< HEAD
   uint16_t inv_p; // Number of invalid areas
   uint8_t
       inv_area_joined[LV_INV_BUF_SIZE]; // Array to track joined invalid areas
   lv_area_t inv_areas[LV_INV_BUF_SIZE]; // Array of invalid areas
-=======
-  uint16_t inv_p; // Number of invalid areas
-  uint8_t
-      inv_area_joined[LV_INV_BUF_SIZE]; // Array to track joined invalid areas
-  lv_area_t inv_areas[LV_INV_BUF_SIZE]; // Array of invalid areas
->>>>>>> ui-base
 } lv_port_dirty_area_t;
 
 // Enumeration for flush status
