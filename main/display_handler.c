@@ -52,9 +52,6 @@ static RealtimeData g_realtime;
 static bool g_dashboard_ready = false;
 static SemaphoreHandle_t g_dashboard_mutex = NULL;
 
-static DH_bme280_reading g_bme280_reading = {0};
-static SemaphoreHandle_t g_bme280_reading_mutex = NULL;
-
 /*---------------------------Setup
  * Wizard--------------------------------------*/
 static bool g_setup_ready = false;
@@ -374,12 +371,6 @@ int display_handler_init(DH *_DH) {
   g_footer_mutex = xSemaphoreCreateMutex();
   if (!g_footer_mutex) {
     ESP_LOGE(TAG, "Failed to create footer mutex");
-    return -1;
-  }
-
-  g_bme280_reading_mutex = xSemaphoreCreateMutex();
-  if (!g_bme280_reading_mutex) {
-    ESP_LOGE(TAG, "Failed to create bme280 reaing mutex");
     return -1;
   }
 
