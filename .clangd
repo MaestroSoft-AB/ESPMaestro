@@ -1,0 +1,14 @@
+CompileFlags:
+  Add: [-Wno-unknown-warning-option]
+
+InlayHints:
+  Enabled: false
+
+Diagnostics:
+  UnusedIncludes: None
+  MissingIncludes: None
+
+Completion:
+  AllScopes: true
+
+HeaderInsertion: Never

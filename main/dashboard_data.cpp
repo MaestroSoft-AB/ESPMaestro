@@ -8,9 +8,9 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "wifi_handler.h"
-#include <time.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static const char *TAG = "DashboardData";
 static DashboardData *g_dashboard_data_instance = nullptr;
@@ -165,7 +165,6 @@ static bool dbd_fetch_http_url(const char *url, char *response,
   return true;
 }
 
-
 static bool dbd_parse_optimaestro_display_json(const char *json,
                                                DbdFetchResult *result) {
   if (json == NULL || result == NULL)
@@ -238,8 +237,9 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
       result->kwh_24h[hour] = (float)(hour_mwh / 1000.0);
       result->cost_24h[hour] = (float)hour_cost_sek;
       result->sek_24h[hour] =
-          valid_buckets > 0 ? (float)((hour_price_msek / valid_buckets) / 1000.0)
-                            : 0.0f;
+          valid_buckets > 0
+              ? (float)((hour_price_msek / valid_buckets) / 1000.0)
+              : 0.0f;
       result->power_24h[hour] =
           (uint32_t)(result->kwh_24h[hour] * 1000.0f + 0.5f);
       result->has_data[hour] = true;
@@ -375,8 +375,7 @@ static bool dbd_fetch_optimaestro_display_json(DbdFetchResult *result,
   snprintf(url, sizeof(url), "%s?range=%s", OPTIMAESTRO_DISPLAY_GRAPH_URL,
            range_param);
 
-  if (!dbd_fetch_http_url(url, response,
-                          OPTIMAESTRO_DISPLAY_HTTP_MAX_BODY,
+  if (!dbd_fetch_http_url(url, response, OPTIMAESTRO_DISPLAY_HTTP_MAX_BODY,
                           "OptiMaestro display")) {
     free(response);
     return false;
@@ -526,7 +525,7 @@ static bool dbd_fetch_open_meteo_forecast(DbdFetchResult *result) {
 /*-----------------------------------*/
 
 DashboardData::DashboardData()
-    : initialized_(false), state(DBD_STATE_IDLE), need_weaterdata(true),
+    : initialized_(false), state(DBD_STATE_IDLE), need_weatherdata(true),
       need_electricitydata(true), need_realtimedata(true), task(nullptr),
       fetch_task(NULL), fetch_result_queue(NULL), fetch_in_progress(false),
       pending_range_refresh_(false), energy_range_(DASHBOARD_ENERGY_RANGE_24H),
@@ -606,19 +605,20 @@ void DashboardData::update_electricity(
   electricitydata_.point_count = point_count;
   electricitydata_.interval_minutes = interval_minutes;
   memcpy(electricitydata_.labels, labels, sizeof(electricitydata_.labels));
-  memcpy(electricitydata_.has_data, has_data, sizeof(electricitydata_.has_data));
+  memcpy(electricitydata_.has_data, has_data,
+         sizeof(electricitydata_.has_data));
 
   electricitydata_.updated_epoch = (uint32_t)time(NULL);
 }
 
-void DashboardData::update_realtime(uint32_t power_w, uint32_t max_power_w_24h,
-                                    float current_kwh, float current_sek_h,
-                                    const uint32_t power_24h[DASHBOARD_ENERGY_MAX_POINTS],
-                                    const float kwh_24h[DASHBOARD_ENERGY_MAX_POINTS],
-                                    const float cost_24h[DASHBOARD_ENERGY_MAX_POINTS],
-                                    uint8_t point_count, uint16_t interval_minutes,
-                                    const char labels[DASHBOARD_ENERGY_MAX_POINTS][6],
-                                    const bool has_data[DASHBOARD_ENERGY_MAX_POINTS]) {
+void DashboardData::update_realtime(
+    uint32_t power_w, uint32_t max_power_w_24h, float current_kwh,
+    float current_sek_h, const uint32_t power_24h[DASHBOARD_ENERGY_MAX_POINTS],
+    const float kwh_24h[DASHBOARD_ENERGY_MAX_POINTS],
+    const float cost_24h[DASHBOARD_ENERGY_MAX_POINTS], uint8_t point_count,
+    uint16_t interval_minutes,
+    const char labels[DASHBOARD_ENERGY_MAX_POINTS][6],
+    const bool has_data[DASHBOARD_ENERGY_MAX_POINTS]) {
   realtimedata_.valid = true;
   realtimedata_.power_w = power_w;
   realtimedata_.max_power_w_24h = max_power_w_24h;
@@ -697,7 +697,7 @@ static DashboardDataStatus dbd_start_fetch(DashboardData *self,
     return DBD_STATE_IDLE;
   }
 
-  if (self->need_weaterdata) {
+  if (self->need_weatherdata) {
     // TODO: replace with OptiMaestro weather/current endpoint when available.
   }
 
@@ -810,7 +810,8 @@ static void dbd_taskwork(void *_context, uint64_t _now_ms) {
   }
 }
 
-extern "C" void dashboard_data_request_energy_range(DashboardEnergyRange range) {
+extern "C" void
+dashboard_data_request_energy_range(DashboardEnergyRange range) {
   if (g_dashboard_data_instance != nullptr) {
     g_dashboard_data_instance->request_energy_range(range);
   }

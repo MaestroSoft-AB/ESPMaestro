@@ -18,6 +18,8 @@ static const char *ui_status_state_name(UIStatusState state) {
     return "UI_STATUS_IDLE";
   case UI_STATUS_UPDATE_CLOCK:
     return "UI_STATUS_UPDATE_CLOCK";
+  case UI_STATUS_UPDATE_BME280:
+    return "UI_STATUS_UPDATE_BME280";
   default:
     return "UI_STATUS_UNKNOWN";
   }
@@ -52,13 +54,29 @@ UIStatusState ui_status_update_clock(UiStatus *self, uint64_t now_ms) {
   return UI_STATUS_IDLE;
 };
 
+UIStatusState ui_status_update_bme280(UiStatus *self, uint64_t now_ms) {
+  if (self->sensor == nullptr)
+    return UI_STATUS_IDLE;
+
+  bme280_reading reading = {};
+
+  if (self->sensor->latest(&reading)) {
+    display_handler_update_bme280(reading.temperature_c, reading.humidity_rh,
+                                  reading.pressure_hpa);
+  }
+
+  self->next_bme280_ms = now_ms + 5000;
+  return UI_STATUS_IDLE;
+}
+
 static void ui_status_taskwork(void *_context, uint64_t _now) {
   UiStatus *self = static_cast<UiStatus *>(_context);
   if (self == nullptr)
     return;
 
   UIStatusState state = self->get_state();
-  if (state != UI_STATUS_UPDATE_CLOCK && self->should_log_state(state)) {
+  if (state != UI_STATUS_UPDATE_CLOCK && state != UI_STATUS_UPDATE_BME280 &&
+      self->should_log_state(state)) {
     ESP_LOGI(TAG, "%s", ui_status_state_name(state));
   }
 
@@ -76,11 +94,20 @@ static void ui_status_taskwork(void *_context, uint64_t _now) {
       self->set_state(UI_STATUS_UPDATE_CLOCK);
       break;
     }
+
+    if (_now >= self->next_bme280_ms) {
+      self->set_state(UI_STATUS_UPDATE_BME280);
+      break;
+    }
     break;
   }
 
   case UI_STATUS_UPDATE_CLOCK:
     self->set_state(ui_status_update_clock(self, _now));
+    break;
+
+  case UI_STATUS_UPDATE_BME280:
+    self->set_state(ui_status_update_bme280(self, _now));
     break;
 
   default:
@@ -95,11 +122,11 @@ void UiStatus::sync_time_from_ntp(uint32_t epoch, uint64_t now_ms) {
   time_valid_ = true;
 }
 
-UiStatus::UiStatus()
+UiStatus::UiStatus(class bme280 *sensor)
     : state_(UI_STATUS_INIT), base_epoch_(0), base_ms_(0), next_clock_ms_(0),
       task_(nullptr), time_valid_(false), initialized_(true),
       logged_state_(UI_STATUS_INIT), has_logged_state_(false), hour(0),
-      minute(0), second(0) {
+      minute(0), second(0), sensor(sensor) {
   task_ = scheduler_create_task(this, ui_status_taskwork);
   if (task_ == nullptr) {
     initialized_ = false;

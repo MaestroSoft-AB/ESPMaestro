@@ -4,7 +4,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
-#include <time.h>
+
+#define BME280_RETRY_MS 1000
+#define BME280_TASK_STACK 4096
+#define BME280_TASK_PRIORITY 2
+
 static const char *TAG = "bme280";
 
 bool bme280::init(i2c_master_bus_handle_t bus) {
@@ -169,4 +173,39 @@ BME280_INTF_RET_TYPE bme280::i2c_write(uint8_t reg_addr,
 void bme280::delay_us(uint32_t period, void *intf_ptr) {
   (void)intf_ptr;
   esp_rom_delay_us(period);
+}
+
+bool bme280::start(i2c_master_bus_handle_t bus, uint32_t interval_ms) {
+  if (api_task_ != nullptr) {
+    return true;
+  }
+
+  bus_ = bus;
+  api_interval_ms_ = interval_ms;
+
+  return xTaskCreate(api_task_entry, "bme280", BME280_TASK_STACK, this,
+                     BME280_TASK_PRIORITY, &api_task_) == pdPASS;
+}
+
+void bme280::stop() {
+  if (api_task_ != nullptr) {
+    vTaskDelete(api_task_);
+    api_task_ = nullptr;
+  }
+}
+
+void bme280::api_task_entry(void *arg) {
+  bme280 *self = static_cast<bme280 *>(arg);
+
+  while (1) {
+    if (!self->initialized_) {
+      if (!self->init(self->bus_)) {
+        vTaskDelay(pdMS_TO_TICKS(BME280_RETRY_MS));
+        continue;
+      }
+    }
+
+    self->read();
+    vTaskDelay(pdMS_TO_TICKS(self->api_interval_ms_));
+  }
 }
