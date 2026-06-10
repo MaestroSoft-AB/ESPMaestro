@@ -3,6 +3,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "time.h"
 #include <string.h>
 
 #define BME280_RETRY_MS 1000
