@@ -129,7 +129,6 @@ public:
    * @param sek_24h Array containing hourly electricity prices for the last 24
    * hours.
    */
-
   void update_electricity(float current_sek_kwh,
                           const float sek_24h[DASHBOARD_ENERGY_MAX_POINTS],
                           uint8_t point_count, uint16_t interval_minutes,

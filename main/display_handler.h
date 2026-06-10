@@ -98,18 +98,12 @@ typedef struct {
  * @brief Buffered BME280 environmental reading used by the display handler.
  */
 typedef struct {
-  /** @brief True when a new BME280 reading is ready for UI processing. */
-  bool reading_ready;
+  bool indoor_climate_ready;
+  float temperature_c;
+  float pressure_hpa;
+  float humidity_rh;
+} DH_indoor_climate_status;
 
-  /** @brief Temperature in degrees Celsius. */
-  float temp;
-
-  /** @brief Relative humidity in percent RH. */
-  float humidity;
-
-  /** @brief Atmospheric pressure in hectopascals. */
-  float hpa;
-} DH_bme280_reading;
 /*-----------Callbacks-----*/
 
 /**
@@ -200,6 +194,7 @@ void display_handler_update_time(uint8_t h, uint8_t m, uint8_t s);
  * @param day Day of month value in the range 1-31.
  */
 void display_handler_update_date(uint16_t year, uint8_t month, uint8_t day);
+void display_handler_update_live_power(uint32_t power_w);
 
 /**
  * @brief Queue dashboard data for display.

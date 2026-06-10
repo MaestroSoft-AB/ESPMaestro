@@ -207,9 +207,25 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
       return false;
     }
 
+    time_t now = time(NULL);
+    struct tm now_tm = {};
+    localtime_r(&now, &now_tm);
+    int current_hour = now_tm.tm_hour;
+    if (current_hour < 0)
+      current_hour = 0;
+    if (current_hour > 23)
+      current_hour = 23;
+    int current_bucket =
+        (current_hour * OPTIMAESTRO_BUCKETS_PER_HOUR) + (now_tm.tm_min / 15);
+    if (current_bucket < 0)
+      current_bucket = 0;
+    if (current_bucket >= OPTIMAESTRO_PROFILE_BUCKETS)
+      current_bucket = OPTIMAESTRO_PROFILE_BUCKETS - 1;
+
     float total_kwh = 0.0f;
     float total_cost = 0.0f;
     uint32_t max_power = 0;
+    float current_bucket_price_sek = 0.0f;
 
     for (int hour = 0; hour < 24; hour++) {
       double hour_mwh = 0.0;
@@ -232,6 +248,10 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
         hour_price_msek += bucket_msek;
         hour_cost_sek += (bucket_mwh / 1000.0) * (bucket_msek / 1000.0);
         valid_buckets++;
+
+        if (index == current_bucket) {
+          current_bucket_price_sek = (float)(bucket_msek / 1000.0);
+        }
       }
 
       result->kwh_24h[hour] = (float)(hour_mwh / 1000.0);
@@ -264,8 +284,8 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
     result->success = true;
     result->point_count = 24;
     result->interval_minutes = 60;
-    result->current_sek_kwh = result->sek_24h[23];
-    result->power_w = result->power_24h[23];
+    result->current_sek_kwh = current_bucket_price_sek;
+    result->power_w = result->power_24h[current_hour];
     result->max_power_w_24h = max_power;
     result->current_kwh = total_kwh;
     result->current_sek_h = total_cost;
