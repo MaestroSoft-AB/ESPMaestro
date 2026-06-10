@@ -1,4 +1,5 @@
 #include "dashboard_data.hpp"
+#include "cJSON.h"
 #include "display_handler.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
@@ -6,14 +7,13 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "wifi_handler.h"
-#include "cJSON.h"
 #include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "DashboardData";
 
 #ifndef OPTIMAESTRO_DISPLAY_GRAPH_URL
-#define OPTIMAESTRO_DISPLAY_GRAPH_URL                                             \
+#define OPTIMAESTRO_DISPLAY_GRAPH_URL                                          \
   "http://135.225.131.246:10580/api/v1/display/graph/hour"
 #endif
 
@@ -145,9 +145,9 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
 
     kwh_24h[hour] = hour_kwh;
     cost_24h[hour] = hour_cost;
-    sek_24h[hour] =
-        valid_buckets > 0 ? (float)((hour_price_msek / valid_buckets) / 1000.0)
-                          : 0.0f;
+    sek_24h[hour] = valid_buckets > 0
+                        ? (float)((hour_price_msek / valid_buckets) / 1000.0)
+                        : 0.0f;
     power_24h[hour] = hour_power;
 
     total_kwh += hour_kwh;
@@ -239,7 +239,7 @@ static bool dbd_fetch_optimaestro_display_json(DbdFetchResult *result) {
 /*-----------------------------------*/
 
 DashboardData::DashboardData()
-    : initialized_(false), state(DBD_STATE_IDLE), need_weaterdata(true),
+    : initialized_(false), state(DBD_STATE_IDLE), need_weatherdata(true),
       need_electricitydata(true), need_realtimedata(true), task(nullptr),
       fetch_task(NULL), fetch_result_queue(NULL), fetch_in_progress(false),
       base_epoch(0), base_ms(0), next_fetch_ms(0) {
@@ -250,10 +250,9 @@ DashboardData::DashboardData()
     return;
   }
 
-  BaseType_t task_created =
-      xTaskCreate(dbd_fetch_worker_task, "dbd_http_fetch",
-                  OPTIMAESTRO_FETCH_TASK_STACK, this,
-                  OPTIMAESTRO_FETCH_TASK_PRIORITY, &fetch_task);
+  BaseType_t task_created = xTaskCreate(
+      dbd_fetch_worker_task, "dbd_http_fetch", OPTIMAESTRO_FETCH_TASK_STACK,
+      this, OPTIMAESTRO_FETCH_TASK_PRIORITY, &fetch_task);
   if (task_created != pdPASS) {
     vQueueDelete(fetch_result_queue);
     fetch_result_queue = NULL;
@@ -361,7 +360,7 @@ static DashboardDataStatus dbd_start_fetch(DashboardData *self,
     return DBD_STATE_IDLE;
   }
 
-  if (self->need_weaterdata) {
+  if (self->need_weatherdata) {
     // TODO: replace with OptiMaestro weather/current endpoint when available.
   }
 
