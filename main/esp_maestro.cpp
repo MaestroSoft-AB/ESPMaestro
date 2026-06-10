@@ -8,6 +8,7 @@ extern "C" {
 #include "display_handler.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "esp_http_client.h"
 #include "facility_config.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/projdefs.h"
@@ -16,12 +17,86 @@ extern "C" {
 #include "scheduler.h"
 #include "ui_status.hpp"
 #include "wifi_handler.h"
+#define MAESTROUTILS_WITH_CJSON 1
+#include <cJSON.h>
 
 static const char *TAG = "main";
 
 #include "bme280_sensor.hpp"
 #include "i2c.h"
 static DH display_context = {};
+
+#ifndef OPTIMAESTRO_DISPLAY_CURRENT_URL
+#define OPTIMAESTRO_DISPLAY_CURRENT_URL                                          \
+  "http://135.225.131.246:10580/api/v1/display/current"
+#endif
+
+typedef struct {
+  char *data;
+  int len;
+  int capacity;
+} LiveHttpBuffer;
+
+static esp_err_t live_power_http_event_handler(esp_http_client_event_t *evt) {
+  if (evt->event_id != HTTP_EVENT_ON_DATA || evt->data == NULL ||
+      evt->data_len <= 0) {
+    return ESP_OK;
+  }
+
+  LiveHttpBuffer *buffer = static_cast<LiveHttpBuffer *>(evt->user_data);
+  if (!buffer || !buffer->data)
+    return ESP_FAIL;
+
+  if (buffer->len + evt->data_len >= buffer->capacity) {
+    return ESP_FAIL;
+  }
+
+  memcpy(buffer->data + buffer->len, evt->data, evt->data_len);
+  buffer->len += evt->data_len;
+  buffer->data[buffer->len] = '\0';
+  return ESP_OK;
+}
+
+static bool fetch_live_power(uint32_t *power_w_out) {
+  if (!power_w_out || !wifi_handler_is_connected())
+    return false;
+
+  char response[768] = {0};
+  LiveHttpBuffer buffer = {
+      .data = response,
+      .len = 0,
+      .capacity = (int)sizeof(response),
+  };
+
+  esp_http_client_config_t config = {};
+  config.url = OPTIMAESTRO_DISPLAY_CURRENT_URL;
+  config.timeout_ms = 5000;
+  config.event_handler = live_power_http_event_handler;
+  config.user_data = &buffer;
+
+  esp_http_client_handle_t client = esp_http_client_init(&config);
+  if (!client)
+    return false;
+
+  esp_err_t err = esp_http_client_perform(client);
+  int status = esp_http_client_get_status_code(client);
+  esp_http_client_cleanup(client);
+
+  if (err != ESP_OK || status != 200 || buffer.len <= 0)
+    return false;
+
+  cJSON *root = cJSON_Parse(response);
+  if (!root)
+    return false;
+
+  cJSON *power = cJSON_GetObjectItemCaseSensitive(root, "power_w");
+  bool ok = cJSON_IsNumber(power) && power->valuedouble >= 0.0;
+  if (ok) {
+    *power_w_out = (uint32_t)(power->valuedouble + 0.5);
+  }
+  cJSON_Delete(root);
+  return ok;
+}
 
 static void bme280_test_task(void *arg) {
   DH *ctx = static_cast<DH *>(arg);
@@ -48,10 +123,26 @@ static void bme280_test_task(void *arg) {
         ESP_LOGI("BME280_TEST", "T=%.2f C | RH=%.2f %% | P=%.2f hPa",
                  reading.temperature_c, reading.humidity_rh,
                  reading.pressure_hpa);
+        display_handler_update_indoor_climate(reading.temperature_c,
+                                              reading.pressure_hpa,
+                                              reading.humidity_rh);
       }
     }
 
     vTaskDelay(pdMS_TO_TICKS(2000));
+  }
+}
+
+static void live_power_task(void *arg) {
+  (void)arg;
+
+  while (true) {
+    uint32_t power_w = 0;
+    if (fetch_live_power(&power_w)) {
+      display_handler_update_live_power(power_w);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10000));
   }
 }
 
@@ -88,6 +179,10 @@ extern "C" void app_main(void) {
     if (xTaskCreate(bme280_test_task, "bme280_test_task", 4096,
                     &display_context, 1, NULL) != pdPASS) {
       ESP_LOGE(TAG, "Failed to create bme280_test_task");
+    }
+    if (xTaskCreate(live_power_task, "live_power_task", 6144, NULL, 1,
+                    NULL) != pdPASS) {
+      ESP_LOGE(TAG, "Failed to create live_power_task");
     }
   }
 

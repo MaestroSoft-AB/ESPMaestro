@@ -119,9 +119,37 @@ typedef struct {
 
   lv_obj_t *nav_clock_label;
   lv_obj_t *nav_date_label;
+  lv_obj_t *home_time_value_label;
+  lv_obj_t *home_time_sub_label;
+  lv_obj_t *home_status_value_label;
+  lv_obj_t *home_status_sub_label;
+  lv_obj_t *home_outdoor_value_label;
+  lv_obj_t *home_outdoor_sub_label;
+  lv_obj_t *home_forecast_value_label;
+  lv_obj_t *home_forecast_sub_label;
+  lv_obj_t *home_price_value_label;
+  lv_obj_t *home_price_sub_label;
+  lv_obj_t *home_meter_value_label;
+  lv_obj_t *home_meter_sub_label;
+  lv_obj_t *home_indoor_temp_value_label;
+  lv_obj_t *home_indoor_temp_sub_label;
+  lv_obj_t *home_humidity_value_label;
+  lv_obj_t *home_humidity_sub_label;
+  lv_obj_t *home_pressure_value_label;
+  lv_obj_t *home_pressure_sub_label;
+  uint16_t current_year;
+  uint8_t current_month;
+  uint8_t current_day;
   uint8_t current_hour;
   uint8_t current_minute;
   bool has_time;
+  bool has_date;
+  bool has_indoor_climate;
+  bool has_live_power;
+  float indoor_temperature_c;
+  float indoor_pressure_hpa;
+  float indoor_humidity_rh;
+  uint32_t live_power_w;
 
   UI_Screen current_screen;
   bool wifi_connecting;
@@ -170,6 +198,9 @@ void ui_set_wifi_status(UI *_UI, bool _connected, const char *_ssid,
                         const char *_ip);
 void ui_set_wifi_network_list(UI *_UI, const char *_options);
 void ui_set_date(UI *_UI, uint16_t year, uint8_t month, uint8_t day);
+void ui_set_indoor_climate(UI *_UI, float temperature_c, float pressure_hpa,
+                           float humidity_rh);
+void ui_set_live_power(UI *_UI, uint32_t power_w);
 void ui_set_dashboard_data(UI *ui, const WeatherData *w,
                            const ElectricityData *e, const RealtimeData *r);
 void ui_start_setup_wizard(UI *_UI, bool missing_wifi, bool missing_facility);

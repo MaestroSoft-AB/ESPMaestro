@@ -48,6 +48,15 @@ static SemaphoreHandle_t g_time_status_mutex = NULL;
 static DH_date_status g_date_status = {0};
 static SemaphoreHandle_t g_date_status_mutex = NULL;
 
+static DH_indoor_climate_status g_indoor_climate_status = {0};
+static SemaphoreHandle_t g_indoor_climate_mutex = NULL;
+
+static struct {
+  bool ready;
+  uint32_t power_w;
+} g_live_power_status = {0};
+static SemaphoreHandle_t g_live_power_mutex = NULL;
+
 /*---------------------------Dashboard--------------------------------------*/
 static WeatherData g_weather;
 static ElectricityData g_electricity;
@@ -276,6 +285,32 @@ void display_handler_update_date(uint16_t year, uint8_t month, uint8_t day) {
   }
 }
 
+void display_handler_update_indoor_climate(float temperature_c,
+                                           float pressure_hpa,
+                                           float humidity_rh) {
+  if (!g_indoor_climate_mutex)
+    return;
+
+  if (xSemaphoreTake(g_indoor_climate_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    g_indoor_climate_status.temperature_c = temperature_c;
+    g_indoor_climate_status.pressure_hpa = pressure_hpa;
+    g_indoor_climate_status.humidity_rh = humidity_rh;
+    g_indoor_climate_status.indoor_climate_ready = true;
+    xSemaphoreGive(g_indoor_climate_mutex);
+  }
+}
+
+void display_handler_update_live_power(uint32_t power_w) {
+  if (!g_live_power_mutex)
+    return;
+
+  if (xSemaphoreTake(g_live_power_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    g_live_power_status.power_w = power_w;
+    g_live_power_status.ready = true;
+    xSemaphoreGive(g_live_power_mutex);
+  }
+}
+
 /******************************************************************/
 
 void display_handler_update_dashboard(const WeatherData *w,
@@ -403,6 +438,18 @@ int display_handler_init(DH *_DH) {
     return -1;
   }
 
+  g_indoor_climate_mutex = xSemaphoreCreateMutex();
+  if (!g_indoor_climate_mutex) {
+    ESP_LOGE(TAG, "Failed to create indoor climate mutex");
+    return -1;
+  }
+
+  g_live_power_mutex = xSemaphoreCreateMutex();
+  if (!g_live_power_mutex) {
+    ESP_LOGE(TAG, "Failed to create live power mutex");
+    return -1;
+  }
+
   g_dashboard_mutex = xSemaphoreCreateMutex();
   if (!g_dashboard_mutex) {
     ESP_LOGE(TAG, "Failed to create dashboard mutex");
@@ -444,6 +491,8 @@ void display_handler_work(void *_null_for_now) {
     bool need_ui_update = false;
     bool need_time_update = false;
     bool need_date_update = false;
+    bool need_indoor_climate_update = false;
+    bool need_live_power_update = false;
     bool need_dashboard_update = false;
     bool need_setup_update = false;
     bool setup_missing_wifi = false;
@@ -454,6 +503,10 @@ void display_handler_work(void *_null_for_now) {
     WeatherData w;
     ElectricityData e;
     RealtimeData r;
+    float indoor_temperature_c = 0.0f;
+    float indoor_pressure_hpa = 0.0f;
+    float indoor_humidity_rh = 0.0f;
+    uint32_t live_power_w = 0;
 
     if (g_wifi_status_mutex &&
         xSemaphoreTake(g_wifi_status_mutex, 0) == pdTRUE) {
@@ -522,6 +575,36 @@ void display_handler_work(void *_null_for_now) {
       if (need_date_update) {
         ui_set_date(&g_ui, g_date_status.year, g_date_status.month,
                     g_date_status.day);
+      }
+
+      if (g_indoor_climate_mutex &&
+          xSemaphoreTake(g_indoor_climate_mutex, 0) == pdTRUE) {
+        if (g_indoor_climate_status.indoor_climate_ready) {
+          indoor_temperature_c = g_indoor_climate_status.temperature_c;
+          indoor_pressure_hpa = g_indoor_climate_status.pressure_hpa;
+          indoor_humidity_rh = g_indoor_climate_status.humidity_rh;
+          g_indoor_climate_status.indoor_climate_ready = false;
+          need_indoor_climate_update = true;
+        }
+        xSemaphoreGive(g_indoor_climate_mutex);
+      }
+
+      if (need_indoor_climate_update) {
+        ui_set_indoor_climate(&g_ui, indoor_temperature_c, indoor_pressure_hpa,
+                              indoor_humidity_rh);
+      }
+
+      if (g_live_power_mutex && xSemaphoreTake(g_live_power_mutex, 0) == pdTRUE) {
+        if (g_live_power_status.ready) {
+          live_power_w = g_live_power_status.power_w;
+          g_live_power_status.ready = false;
+          need_live_power_update = true;
+        }
+        xSemaphoreGive(g_live_power_mutex);
+      }
+
+      if (need_live_power_update) {
+        ui_set_live_power(&g_ui, live_power_w);
       }
 
       if (g_dashboard_mutex && xSemaphoreTake(g_dashboard_mutex, 0) == pdTRUE) {

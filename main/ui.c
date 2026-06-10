@@ -55,9 +55,15 @@ static lv_obj_t *ui_create_form_field(UI *_UI, lv_obj_t *_parent,
 static void ui_create_metric_card(lv_obj_t *_parent, const char *_title,
                                   const char *_value, const char *_sub,
                                   lv_color_t _accent);
+static void ui_create_metric_card_refs(lv_obj_t *_parent, const char *_title,
+                                       const char *_value, const char *_sub,
+                                       lv_color_t _accent,
+                                       lv_obj_t **_value_label,
+                                       lv_obj_t **_sub_label);
 static void ui_create_settings_card(UI *_UI, lv_obj_t *_parent, lv_obj_t **_out,
                                     const char *_title, const char *_sub,
                                     lv_color_t _accent);
+static void ui_update_home_metrics(UI *_UI);
 static void ui_update_forecast_data(UI *ui, const WeatherData *weather);
 static int ui_forecast_table_page_count(void);
 static void ui_update_wifi_rows(UI *_UI);
@@ -925,6 +931,8 @@ void ui_set_dashboard_data(UI *ui, const WeatherData *weather,
     ui_update_forecast_data(ui, weather);
   }
 
+  ui_update_home_metrics(ui);
+
   if (realtime->valid == false) {
     return;
   }
@@ -1216,6 +1224,24 @@ static void ui_destroy_active_screen(UI *_UI) {
   _UI->forecast_detail_prev_btn = NULL;
   _UI->forecast_detail_next_btn = NULL;
   _UI->forecast_detail_page_label = NULL;
+  _UI->home_time_value_label = NULL;
+  _UI->home_time_sub_label = NULL;
+  _UI->home_status_value_label = NULL;
+  _UI->home_status_sub_label = NULL;
+  _UI->home_outdoor_value_label = NULL;
+  _UI->home_outdoor_sub_label = NULL;
+  _UI->home_forecast_value_label = NULL;
+  _UI->home_forecast_sub_label = NULL;
+  _UI->home_price_value_label = NULL;
+  _UI->home_price_sub_label = NULL;
+  _UI->home_meter_value_label = NULL;
+  _UI->home_meter_sub_label = NULL;
+  _UI->home_indoor_temp_value_label = NULL;
+  _UI->home_indoor_temp_sub_label = NULL;
+  _UI->home_humidity_value_label = NULL;
+  _UI->home_humidity_sub_label = NULL;
+  _UI->home_pressure_value_label = NULL;
+  _UI->home_pressure_sub_label = NULL;
   _UI->forecast_detail_page = 0;
   _UI->forecast_table_page = 0;
   _UI->elpriser_chart = NULL;
@@ -1329,8 +1355,10 @@ void ui_show_screen(UI *_UI, UI_Screen _screen) {
   ui_build_active_screen(_UI, _screen);
   ui_update_nav(_UI);
 
-  if ((_screen == UI_SCREEN_FORECAST || _screen == UI_SCREEN_ELPRISER) &&
-      _UI->has_dashboard_data) {
+  if (_screen == UI_SCREEN_HOME) {
+    ui_update_home_metrics(_UI);
+  } else if ((_screen == UI_SCREEN_FORECAST || _screen == UI_SCREEN_ELPRISER) &&
+             _UI->has_dashboard_data) {
     ui_set_dashboard_data(_UI, &_UI->cached_weather, &_UI->cached_electricity,
                           &_UI->cached_realtime);
   }
@@ -1419,6 +1447,15 @@ static lv_obj_t *ui_create_form_field(UI *_UI, lv_obj_t *_parent,
 static void ui_create_metric_card(lv_obj_t *_parent, const char *_title,
                                   const char *_value, const char *_sub,
                                   lv_color_t _accent) {
+  ui_create_metric_card_refs(_parent, _title, _value, _sub, _accent, NULL,
+                             NULL);
+}
+
+static void ui_create_metric_card_refs(lv_obj_t *_parent, const char *_title,
+                                       const char *_value, const char *_sub,
+                                       lv_color_t _accent,
+                                       lv_obj_t **_value_label,
+                                       lv_obj_t **_sub_label) {
   lv_obj_t *card = lv_obj_create(_parent);
   lv_obj_set_size(card, LV_PCT(100), 105);
   lv_obj_set_style_bg_color(card, lv_color_hex(C_CARD), 0);
@@ -1434,6 +1471,10 @@ static void ui_create_metric_card(lv_obj_t *_parent, const char *_title,
   lv_obj_align(v, LV_ALIGN_TOP_LEFT, 0, 30);
   lv_obj_t *s = ui_create_label(card, _sub, lv_color_hex(C_MUTED));
   lv_obj_align(s, LV_ALIGN_TOP_LEFT, 0, 62);
+  if (_value_label)
+    *_value_label = v;
+  if (_sub_label)
+    *_sub_label = s;
 }
 
 static void ui_build_screen_home(UI *_UI) {
@@ -1456,7 +1497,7 @@ static void ui_build_screen_home(UI *_UI) {
 
   lv_obj_t *grid = lv_obj_create(_UI->screen_home);
   lv_obj_set_width(grid, LV_PCT(100));
-  lv_obj_set_height(grid, 245);
+  lv_obj_set_height(grid, 360);
   lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(grid, 0, 0);
   lv_obj_set_style_pad_all(grid, 0, 0);
@@ -1483,18 +1524,42 @@ static void ui_build_screen_home(UI *_UI) {
     lv_obj_set_flex_flow(cols[i], LV_FLEX_FLOW_COLUMN);
   }
 
-  ui_create_metric_card(col1, "Time", "12:45", "2026-04-28",
-                        lv_color_hex(C_BLUE));
-  ui_create_metric_card(col1, "Status", "System OK", _UI->wifi_status,
-                        lv_color_hex(C_GREEN));
-  ui_create_metric_card(col2, "Outdoor", "8°C", "Cloudy, light wind",
-                        lv_color_hex(C_BLUE));
-  ui_create_metric_card(col2, "Forecast", "Low solar", "Updated recently",
-                        lv_color_hex(C_YELLOW));
-  ui_create_metric_card(col3, "Current price", "0.68 SEK/kWh",
-                        "Normal price level", lv_color_hex(C_YELLOW));
-  ui_create_metric_card(col3, "Meter", "Waiting", "P1/HAN data not wired",
-                        lv_color_hex(C_PURPLE));
+  ui_create_metric_card_refs(col1, "Time", "--:--", "---- -- --",
+                             lv_color_hex(C_BLUE), &_UI->home_time_value_label,
+                             &_UI->home_time_sub_label);
+  ui_create_metric_card_refs(col1, "Status", "System OK", _UI->wifi_status,
+                             lv_color_hex(C_GREEN),
+                             &_UI->home_status_value_label,
+                             &_UI->home_status_sub_label);
+  ui_create_metric_card_refs(col2, "Outdoor Temperature", "--.-C", "Waiting for weather",
+                             lv_color_hex(C_BLUE),
+                             &_UI->home_outdoor_value_label,
+                             &_UI->home_outdoor_sub_label);
+  ui_create_metric_card_refs(col2, "Forecast", "--", "Waiting for forecast",
+                             lv_color_hex(C_YELLOW),
+                             &_UI->home_forecast_value_label,
+                             &_UI->home_forecast_sub_label);
+  ui_create_metric_card_refs(col3, "Current price", "--.-- SEK/kWh",
+                             "Waiting for price data", lv_color_hex(C_YELLOW),
+                             &_UI->home_price_value_label,
+                             &_UI->home_price_sub_label);
+  ui_create_metric_card_refs(col3, "Current Electrical Usage", "-- W",
+                             "Waiting for meter data", lv_color_hex(C_PURPLE),
+                             &_UI->home_meter_value_label,
+                             &_UI->home_meter_sub_label);
+  ui_create_metric_card_refs(col1, "Indoor temp", "--.-C",
+                             "Waiting for BME280", lv_color_hex(C_GREEN),
+                             &_UI->home_indoor_temp_value_label,
+                             &_UI->home_indoor_temp_sub_label);
+  ui_create_metric_card_refs(col2, "Humidity", "--.- %",
+                             "Waiting for BME280", lv_color_hex(C_BLUE),
+                             &_UI->home_humidity_value_label,
+                             &_UI->home_humidity_sub_label);
+  ui_create_metric_card_refs(col3, "Pressure", "----.- hPa",
+                             "Waiting for BME280", lv_color_hex(C_YELLOW),
+                             &_UI->home_pressure_value_label,
+                             &_UI->home_pressure_sub_label);
+  ui_update_home_metrics(_UI);
 }
 
 static int ui_forecast_temp_min_scaled(const float *values) {
@@ -1594,6 +1659,180 @@ static void ui_update_forecast_table(UI *ui, const WeatherData *weather) {
   }
 
   ui_apply_forecast_view(ui);
+}
+
+static void ui_update_home_metrics(UI *_UI) {
+  if (!_UI)
+    return;
+
+  char buf[64];
+  char sub[128];
+
+  if (_UI->home_time_value_label) {
+    if (_UI->has_time) {
+      snprintf(buf, sizeof(buf), "%02u:%02u", _UI->current_hour,
+               _UI->current_minute);
+    } else {
+      snprintf(buf, sizeof(buf), "--:--");
+    }
+    lv_label_set_text(_UI->home_time_value_label, buf);
+  }
+
+  if (_UI->home_time_sub_label) {
+    if (_UI->has_date) {
+      snprintf(sub, sizeof(sub), "%04u-%02u-%02u", _UI->current_year,
+               _UI->current_month, _UI->current_day);
+    } else {
+      snprintf(sub, sizeof(sub), "Waiting for date");
+    }
+    lv_label_set_text(_UI->home_time_sub_label, sub);
+  }
+
+  if (_UI->home_status_value_label) {
+    lv_label_set_text(_UI->home_status_value_label,
+                      _UI->wifi_connected ? "Connected" : "Offline");
+  }
+
+  if (_UI->home_status_sub_label) {
+    if (_UI->wifi_connected && _UI->wifi_ssid[0]) {
+      snprintf(sub, sizeof(sub), "%s%s%s", _UI->wifi_ssid,
+               _UI->wifi_ip[0] ? " " : "", _UI->wifi_ip);
+    } else {
+      snprintf(sub, sizeof(sub), "%s",
+               _UI->wifi_status[0] ? _UI->wifi_status : "WiFi not connected");
+    }
+    lv_label_set_text(_UI->home_status_sub_label, sub);
+  }
+
+  if (_UI->home_outdoor_value_label) {
+    if (_UI->cached_weather.valid) {
+      snprintf(buf, sizeof(buf), "%.1fC", _UI->cached_weather.outdoor_c);
+    } else {
+      snprintf(buf, sizeof(buf), "--.-C");
+    }
+    lv_label_set_text(_UI->home_outdoor_value_label, buf);
+  }
+
+  if (_UI->home_outdoor_sub_label) {
+    if (_UI->cached_weather.valid) {
+      snprintf(sub, sizeof(sub), "%s", _UI->cached_weather.summary);
+    } else {
+      snprintf(sub, sizeof(sub), "Waiting for weather");
+    }
+    lv_label_set_text(_UI->home_outdoor_sub_label, sub);
+  }
+
+  if (_UI->home_forecast_value_label) {
+    if (_UI->cached_weather.valid) {
+      snprintf(buf, sizeof(buf), "%.1fC", _UI->cached_weather.temp_c_24h[0]);
+    } else {
+      snprintf(buf, sizeof(buf), "--");
+    }
+    lv_label_set_text(_UI->home_forecast_value_label, buf);
+  }
+
+  if (_UI->home_forecast_sub_label) {
+    if (_UI->cached_weather.valid) {
+      snprintf(sub, sizeof(sub), "%s, %u%% rain", _UI->cached_weather.time_24h[0],
+               _UI->cached_weather.rain_percent_24h[0]);
+    } else {
+      snprintf(sub, sizeof(sub), "Waiting for forecast");
+    }
+    lv_label_set_text(_UI->home_forecast_sub_label, sub);
+  }
+
+  if (_UI->home_price_value_label) {
+    if (_UI->cached_electricity.valid) {
+      snprintf(buf, sizeof(buf), "%.2f SEK/kWh",
+               _UI->cached_electricity.current_sek_kwh);
+    } else {
+      snprintf(buf, sizeof(buf), "--.-- SEK/kWh");
+    }
+    lv_label_set_text(_UI->home_price_value_label, buf);
+  }
+
+  if (_UI->home_price_sub_label) {
+    if (_UI->cached_electricity.valid && _UI->has_time) {
+      unsigned int current_bucket =
+          (_UI->current_hour * 4U) + ((unsigned int)_UI->current_minute / 15U) + 1U;
+      if (current_bucket > 96U)
+        current_bucket = 96U;
+      snprintf(sub, sizeof(sub), "%u of 96", current_bucket);
+    } else if (_UI->cached_electricity.valid) {
+      snprintf(sub, sizeof(sub), "Current 15 min bucket");
+    } else {
+      snprintf(sub, sizeof(sub), "Waiting for price data");
+    }
+    lv_label_set_text(_UI->home_price_sub_label, sub);
+  }
+
+  if (_UI->home_meter_value_label) {
+    if (_UI->has_live_power) {
+      snprintf(buf, sizeof(buf), "%lu W", (unsigned long)_UI->live_power_w);
+    } else if (_UI->cached_realtime.valid) {
+      snprintf(buf, sizeof(buf), "%lu W",
+               (unsigned long)_UI->cached_realtime.power_w);
+    } else {
+      snprintf(buf, sizeof(buf), "-- W");
+    }
+    lv_label_set_text(_UI->home_meter_value_label, buf);
+  }
+
+  if (_UI->home_meter_sub_label) {
+    if (_UI->has_live_power) {
+      snprintf(sub, sizeof(sub), "Live meter reading");
+    } else if (_UI->cached_realtime.valid) {
+      snprintf(sub, sizeof(sub), "%.2f kWh today", _UI->cached_realtime.current_kwh);
+    } else {
+      snprintf(sub, sizeof(sub), "Waiting for meter data");
+    }
+    lv_label_set_text(_UI->home_meter_sub_label, sub);
+  }
+
+  if (_UI->home_indoor_temp_value_label) {
+    if (_UI->has_indoor_climate) {
+      snprintf(buf, sizeof(buf), "%.1fC", _UI->indoor_temperature_c);
+    } else {
+      snprintf(buf, sizeof(buf), "--.-C");
+    }
+    lv_label_set_text(_UI->home_indoor_temp_value_label, buf);
+  }
+
+  if (_UI->home_indoor_temp_sub_label) {
+    lv_label_set_text(_UI->home_indoor_temp_sub_label,
+                      _UI->has_indoor_climate ? "BME280 indoor sensor"
+                                              : "Waiting for BME280");
+  }
+
+  if (_UI->home_humidity_value_label) {
+    if (_UI->has_indoor_climate) {
+      snprintf(buf, sizeof(buf), "%.1f %%", _UI->indoor_humidity_rh);
+    } else {
+      snprintf(buf, sizeof(buf), "--.- %%");
+    }
+    lv_label_set_text(_UI->home_humidity_value_label, buf);
+  }
+
+  if (_UI->home_humidity_sub_label) {
+    lv_label_set_text(_UI->home_humidity_sub_label,
+                      _UI->has_indoor_climate ? "Relative humidity"
+                                              : "Waiting for BME280");
+  }
+
+  if (_UI->home_pressure_value_label) {
+    if (_UI->has_indoor_climate) {
+      snprintf(buf, sizeof(buf), "%.1f hPa", _UI->indoor_pressure_hpa);
+    } else {
+      snprintf(buf, sizeof(buf), "----.- hPa");
+    }
+    lv_label_set_text(_UI->home_pressure_value_label, buf);
+  }
+
+  if (_UI->home_pressure_sub_label) {
+    lv_label_set_text(_UI->home_pressure_sub_label,
+                      _UI->has_indoor_climate ? "Sea-level local pressure"
+                                              : "Waiting for BME280");
+  }
 }
 
 static void ui_update_forecast_data(UI *ui, const WeatherData *weather) {
@@ -2694,6 +2933,7 @@ void ui_set_wifi_status(UI *_UI, bool _connected, const char *_ssid,
     snprintf(_UI->wifi_status, sizeof(_UI->wifi_status), "WiFi: Not connected");
   ui_set_footer_text(_UI, _UI->wifi_status);
   ui_update_nav(_UI);
+  ui_update_home_metrics(_UI);
   if (_connected && _UI->wifi_password_overlay) {
     ui_close_wifi_password(_UI);
   }
@@ -2827,6 +3067,8 @@ void ui_set_time(UI *_UI, uint8_t h, uint8_t m, uint8_t s) {
   if (_UI->nav_clock_label) {
     lv_label_set_text(_UI->nav_clock_label, clock);
   }
+
+  ui_update_home_metrics(_UI);
 }
 
 void ui_set_date(UI *_UI, uint16_t year, uint8_t month, uint8_t day) {
@@ -2855,6 +3097,33 @@ void ui_set_date(UI *_UI, uint16_t year, uint8_t month, uint8_t day) {
   if (_UI->nav_date_label) {
     lv_label_set_text(_UI->nav_date_label, date);
   }
+
+  _UI->current_year = year;
+  _UI->current_month = month;
+  _UI->current_day = day;
+  _UI->has_date = true;
+  ui_update_home_metrics(_UI);
+}
+
+void ui_set_indoor_climate(UI *_UI, float temperature_c, float pressure_hpa,
+                           float humidity_rh) {
+  if (!_UI)
+    return;
+
+  _UI->has_indoor_climate = true;
+  _UI->indoor_temperature_c = temperature_c;
+  _UI->indoor_pressure_hpa = pressure_hpa;
+  _UI->indoor_humidity_rh = humidity_rh;
+  ui_update_home_metrics(_UI);
+}
+
+void ui_set_live_power(UI *_UI, uint32_t power_w) {
+  if (!_UI)
+    return;
+
+  _UI->has_live_power = true;
+  _UI->live_power_w = power_w;
+  ui_update_home_metrics(_UI);
 }
 
 void ui_tick(UI *_UI) { (void)_UI; }
