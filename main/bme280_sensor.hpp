@@ -77,6 +77,18 @@ public:
   bool latest(bme280_reading *out) const;
 
   /**
+   * @brief Convert raw Bosch BME280 data to cached application reading.
+   *
+   * Converts pressure from pascals to hectopascals and marks the reading valid.
+   *
+   * @param data Raw Bosch sensor data.
+   * @param epoch Unix epoch timestamp to store in the reading.
+   * @return Converted application reading.
+   */
+  static bme280_reading make_reading(const struct bme280_data &data,
+                                     uint32_t epoch);
+
+  /**
    * @brief Start a background FreeRTOS task for periodic readings.
    *
    * The task initializes the sensor if needed. If initialization fails, it
