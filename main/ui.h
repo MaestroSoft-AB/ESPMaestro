@@ -119,16 +119,22 @@ typedef struct {
 
   lv_obj_t *nav_clock_label;
   lv_obj_t *nav_date_label;
+  lv_obj_t *home_outdoor_icon_label;
   lv_obj_t *home_outdoor_value_label;
   lv_obj_t *home_outdoor_sub_label;
+  lv_obj_t *home_price_icon_label;
   lv_obj_t *home_price_value_label;
   lv_obj_t *home_price_sub_label;
+  lv_obj_t *home_meter_icon_label;
   lv_obj_t *home_meter_value_label;
   lv_obj_t *home_meter_sub_label;
+  lv_obj_t *home_indoor_temp_icon_label;
   lv_obj_t *home_indoor_temp_value_label;
   lv_obj_t *home_indoor_temp_sub_label;
+  lv_obj_t *home_humidity_icon_label;
   lv_obj_t *home_humidity_value_label;
   lv_obj_t *home_humidity_sub_label;
+  lv_obj_t *home_pressure_icon_label;
   lv_obj_t *home_pressure_value_label;
   lv_obj_t *home_pressure_sub_label;
   uint16_t current_year;

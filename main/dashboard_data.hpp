@@ -115,12 +115,18 @@ public:
   void update_weather(float outdoor_c, float indoor_c, const char *summary);
 
   void update_weather_forecast(float outdoor_c, const char *summary,
-                               const float temp_c_24h[24],
-                               const uint8_t rain_percent_24h[24],
-                               const uint16_t weather_code_24h[24],
-                               const uint16_t shortwave_wm2_24h[24],
-                               const float wind_kmh_24h[24],
-                               const char time_24h[24][6]);
+                               const float temp_c_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
+                               const uint8_t rain_percent_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
+                               const uint16_t weather_code_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
+                               const uint16_t shortwave_wm2_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
+                               const float wind_kmh_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
+                               const char time_24h[DASHBOARD_WEATHER_HOURLY_POINTS][6],
+                               const float temp_c_daily[DASHBOARD_WEATHER_DAILY_POINTS],
+                               const uint8_t rain_percent_daily[DASHBOARD_WEATHER_DAILY_POINTS],
+                               const uint16_t weather_code_daily[DASHBOARD_WEATHER_DAILY_POINTS],
+                               const float wind_kmh_daily[DASHBOARD_WEATHER_DAILY_POINTS],
+                               const char time_daily[DASHBOARD_WEATHER_DAILY_POINTS][6],
+                               uint8_t daily_count);
 
   /**
    * @brief Update cached electricity pricing data.
@@ -129,7 +135,7 @@ public:
    * @param sek_24h Array containing hourly electricity prices for the last 24
    * hours.
    */
-  void update_electricity(float current_sek_kwh,
+  void update_electricity(float current_sek_kwh, float avg_sek_kwh_day,
                           const float sek_24h[DASHBOARD_ENERGY_MAX_POINTS],
                           uint8_t point_count, uint16_t interval_minutes,
                           const char labels[DASHBOARD_ENERGY_MAX_POINTS][6],
@@ -147,8 +153,9 @@ public:
    * @param kwh_24h Hourly energy consumption profile.
    * @param cost_24h Hourly cost profile.
    */
-  void update_realtime(uint32_t power_w, uint32_t max_power_w_24h,
-                       float current_kwh, float current_sek_h,
+  void update_realtime(uint32_t power_w, uint32_t historical_avg_power_w,
+                       uint32_t max_power_w_24h, float current_kwh,
+                       float current_sek_h,
                        const uint32_t power_24h[DASHBOARD_ENERGY_MAX_POINTS],
                        const float kwh_24h[DASHBOARD_ENERGY_MAX_POINTS],
                        const float cost_24h[DASHBOARD_ENERGY_MAX_POINTS],

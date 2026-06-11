@@ -20,17 +20,23 @@ static DashboardData *g_dashboard_data_instance = nullptr;
   "http://135.225.131.246:10580/api/v1/display/graph/hour"
 #endif
 
+#ifndef OPTIMAESTRO_WEATHER_CACHE_URL
+#define OPTIMAESTRO_WEATHER_CACHE_URL                                          \
+  "http://135.225.131.246:10580/api/v1/weather/cache"
+#endif
+
 #define OPTIMAESTRO_PROFILE_BUCKETS 96
 #define OPTIMAESTRO_BUCKETS_PER_HOUR 4
 #define OPTIMAESTRO_FETCH_INTERVAL_MS 90000
 #define OPTIMAESTRO_FETCH_RETRY_MS 15000
+#define OPTIMAESTRO_REFRESH_PERIOD_SEC 900
+#define OPTIMAESTRO_REFRESH_OFFSET_SEC 30
 #define OPTIMAESTRO_HTTP_TIMEOUT_MS 5000
 #define OPTIMAESTRO_DISPLAY_HTTP_MAX_BODY 8192
-#define OPEN_METEO_HTTP_MAX_BODY 12288
+#define OPTIMAESTRO_WEATHER_HTTP_MAX_BODY 32768
 #define OPTIMAESTRO_HTTP_LOG_BODY_MAX 240
 #define OPTIMAESTRO_FETCH_TASK_STACK 8192
 #define OPTIMAESTRO_FETCH_TASK_PRIORITY 2
-#define OPEN_METEO_FORECAST_URL_MAX 384
 #define OPTIMAESTRO_WEATHER_URL_MAX 512
 
 typedef struct {
@@ -40,11 +46,22 @@ typedef struct {
 } HttpBuffer;
 
 typedef struct {
+  float temp_sum;
+  float precip_sum;
+  float wind_sum;
+  float wind_max;
+  float solar_sum;
+  uint32_t count;
+} WeatherBucketAccum;
+
+typedef struct {
   bool success;
   DashboardEnergyRange range;
   float current_sek_kwh;
+  float avg_sek_kwh_day;
   float sek_24h[DASHBOARD_ENERGY_MAX_POINTS];
   uint32_t power_w;
+  uint32_t historical_avg_power_w;
   uint32_t max_power_w_24h;
   float current_kwh;
   float current_sek_h;
@@ -58,18 +75,32 @@ typedef struct {
   bool weather_success;
   float outdoor_c;
   char weather_summary[32];
-  float temp_c_24h[24];
-  uint8_t rain_percent_24h[24];
-  uint16_t weather_code_24h[24];
-  uint16_t shortwave_wm2_24h[24];
-  float wind_kmh_24h[24];
-  char weather_time_24h[24][6];
+  float temp_c_24h[DASHBOARD_WEATHER_HOURLY_POINTS];
+  uint8_t rain_percent_24h[DASHBOARD_WEATHER_HOURLY_POINTS];
+  uint16_t weather_code_24h[DASHBOARD_WEATHER_HOURLY_POINTS];
+  uint16_t shortwave_wm2_24h[DASHBOARD_WEATHER_HOURLY_POINTS];
+  float wind_kmh_24h[DASHBOARD_WEATHER_HOURLY_POINTS];
+  char weather_time_24h[DASHBOARD_WEATHER_HOURLY_POINTS][6];
+  float temp_c_daily[DASHBOARD_WEATHER_DAILY_POINTS];
+  uint8_t rain_percent_daily[DASHBOARD_WEATHER_DAILY_POINTS];
+  uint16_t weather_code_daily[DASHBOARD_WEATHER_DAILY_POINTS];
+  float wind_kmh_daily[DASHBOARD_WEATHER_DAILY_POINTS];
+  char weather_time_daily[DASHBOARD_WEATHER_DAILY_POINTS][6];
+  uint8_t daily_count;
 } DbdFetchResult;
 
 /*------------------------------------*/
 static void dbd_taskwork(void *_context, uint64_t _now);
 static void dbd_fetch_worker_task(void *_context);
 static const char *dbd_weather_code_summary(uint16_t code);
+static bool dbd_wall_clock_ready(time_t epoch_now);
+static uint64_t dbd_next_aligned_fetch_ms(uint64_t now_ms);
+static void dbd_url_encode_query_value(const char *in, char *out,
+                                       size_t out_size);
+static uint8_t dbd_precipitation_to_percent(float mm);
+static uint16_t dbd_infer_weather_code(float precipitation_mm, float wind_kmh,
+                                       float shortwave_wm2);
+static void dbd_format_weather_label(time_t stamp, char out[6]);
 /*------------------------------------*/
 
 static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
@@ -105,6 +136,18 @@ static bool read_number_array_item(cJSON *array, int index, double *out) {
   return true;
 }
 
+static bool read_object_number_item(cJSON *object, const char *key, double *out) {
+  if (object == NULL || key == NULL || out == NULL)
+    return false;
+
+  cJSON *item = cJSON_GetObjectItemCaseSensitive(object, key);
+  if (!cJSON_IsNumber(item))
+    return false;
+
+  *out = item->valuedouble;
+  return true;
+}
+
 static void dbd_format_energy_label(time_t stamp, uint16_t interval_minutes,
                                     char out[6]) {
   if (out == NULL)
@@ -118,6 +161,102 @@ static void dbd_format_energy_label(time_t stamp, uint16_t interval_minutes,
   } else {
     strftime(out, 6, "%H:%M", &tm);
   }
+}
+
+static void dbd_format_weather_label(time_t stamp, char out[6]) {
+  if (out == NULL)
+    return;
+
+  struct tm tm = {};
+  localtime_r(&stamp, &tm);
+  strftime(out, 6, "%H:%M", &tm);
+}
+
+static bool dbd_wall_clock_ready(time_t epoch_now) {
+  return epoch_now >= 1704067200; // 2024-01-01 00:00:00 UTC
+}
+
+static uint64_t dbd_next_aligned_fetch_ms(uint64_t now_ms) {
+  time_t epoch_now = time(NULL);
+  if (!dbd_wall_clock_ready(epoch_now)) {
+    return now_ms + OPTIMAESTRO_FETCH_INTERVAL_MS;
+  }
+
+  time_t next_epoch =
+      (((epoch_now / OPTIMAESTRO_REFRESH_PERIOD_SEC) + 1) *
+       OPTIMAESTRO_REFRESH_PERIOD_SEC) +
+      OPTIMAESTRO_REFRESH_OFFSET_SEC;
+
+  int64_t delta_ms = ((int64_t)next_epoch - (int64_t)epoch_now) * 1000LL;
+  if (delta_ms < 1000) {
+    delta_ms = 1000;
+  }
+
+  return now_ms + (uint64_t)delta_ms;
+}
+
+static void dbd_url_encode_query_value(const char *in, char *out,
+                                       size_t out_size) {
+  static const char hex[] = "0123456789ABCDEF";
+  size_t used = 0;
+
+  if (!out || out_size == 0)
+    return;
+
+  if (!in) {
+    out[0] = '\0';
+    return;
+  }
+
+  while (*in && used + 1 < out_size) {
+    unsigned char ch = (unsigned char)*in++;
+    bool plain = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                 (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' ||
+                 ch == '.' || ch == '~';
+
+    if (plain) {
+      out[used++] = (char)ch;
+    } else if (used + 3 < out_size) {
+      out[used++] = '%';
+      out[used++] = hex[ch >> 4];
+      out[used++] = hex[ch & 0x0F];
+    } else {
+      break;
+    }
+  }
+
+  out[used] = '\0';
+}
+
+static uint8_t dbd_precipitation_to_percent(float mm) {
+  if (mm <= 0.0f)
+    return 0;
+  if (mm < 0.1f)
+    return 10;
+  if (mm < 0.3f)
+    return 25;
+  if (mm < 0.7f)
+    return 40;
+  if (mm < 1.5f)
+    return 60;
+  if (mm < 3.0f)
+    return 80;
+  return 100;
+}
+
+static uint16_t dbd_infer_weather_code(float precipitation_mm, float wind_kmh,
+                                       float shortwave_wm2) {
+  if (precipitation_mm >= 1.0f)
+    return 61;
+  if (precipitation_mm > 0.0f)
+    return 51;
+  if (shortwave_wm2 >= 400.0f)
+    return 0;
+  if (shortwave_wm2 >= 180.0f)
+    return 2;
+  if (wind_kmh >= 14.0f)
+    return 3;
+  return 3;
 }
 
 static bool dbd_fetch_http_url(const char *url, char *response,
@@ -191,17 +330,22 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
   result->point_count = 0;
   result->interval_minutes = 60;
   result->current_sek_kwh = 0.0f;
+  result->avg_sek_kwh_day = 0.0f;
   result->power_w = 0;
+  result->historical_avg_power_w = 0;
   result->max_power_w_24h = 0;
   result->current_kwh = 0.0f;
   result->current_sek_h = 0.0f;
 
   if (strcmp(version->valuestring, "od1") == 0) {
     cJSON *consumption = cJSON_GetObjectItemCaseSensitive(series, "c");
+    cJSON *history = cJSON_GetObjectItemCaseSensitive(series, "h");
     cJSON *price = cJSON_GetObjectItemCaseSensitive(series, "p");
 
-    if (!cJSON_IsArray(consumption) || !cJSON_IsArray(price) ||
+    if (!cJSON_IsArray(consumption) || !cJSON_IsArray(history) ||
+        !cJSON_IsArray(price) ||
         cJSON_GetArraySize(consumption) < OPTIMAESTRO_PROFILE_BUCKETS ||
+        cJSON_GetArraySize(history) < OPTIMAESTRO_PROFILE_BUCKETS ||
         cJSON_GetArraySize(price) < OPTIMAESTRO_PROFILE_BUCKETS) {
       cJSON_Delete(root);
       return false;
@@ -226,6 +370,7 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
     float total_cost = 0.0f;
     uint32_t max_power = 0;
     float current_bucket_price_sek = 0.0f;
+    double total_price_msek = 0.0;
 
     for (int hour = 0; hour < 24; hour++) {
       double hour_mwh = 0.0;
@@ -236,9 +381,11 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
       for (int bucket = 0; bucket < OPTIMAESTRO_BUCKETS_PER_HOUR; bucket++) {
         int index = (hour * OPTIMAESTRO_BUCKETS_PER_HOUR) + bucket;
         double bucket_mwh = 0.0;
+        double history_bucket_mwh = 0.0;
         double bucket_msek = 0.0;
 
         if (!read_number_array_item(consumption, index, &bucket_mwh) ||
+            !read_number_array_item(history, index, &history_bucket_mwh) ||
             !read_number_array_item(price, index, &bucket_msek)) {
           cJSON_Delete(root);
           return false;
@@ -246,11 +393,14 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
 
         hour_mwh += bucket_mwh;
         hour_price_msek += bucket_msek;
+        total_price_msek += bucket_msek;
         hour_cost_sek += (bucket_mwh / 1000.0) * (bucket_msek / 1000.0);
         valid_buckets++;
 
         if (index == current_bucket) {
           current_bucket_price_sek = (float)(bucket_msek / 1000.0);
+          result->historical_avg_power_w =
+              (uint32_t)(((history_bucket_mwh / 1000.0) * 4000.0) + 0.5);
         }
       }
 
@@ -285,6 +435,8 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
     result->point_count = 24;
     result->interval_minutes = 60;
     result->current_sek_kwh = current_bucket_price_sek;
+    result->avg_sek_kwh_day =
+        (float)((total_price_msek / OPTIMAESTRO_PROFILE_BUCKETS) / 1000.0);
     result->power_w = result->power_24h[current_hour];
     result->max_power_w_24h = max_power;
     result->current_kwh = total_kwh;
@@ -320,6 +472,7 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
     result->interval_minutes =
         cJSON_IsNumber(minutes) ? (uint16_t)minutes->valueint : 1440;
 
+    int valid_price_points = 0;
     for (int i = 0; i < point_count; i++) {
       double c_mwh = 0.0;
       double p_msek = 0.0;
@@ -347,6 +500,8 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
                               result->labels[i]);
 
       if (result->has_data[i]) {
+        result->avg_sek_kwh_day += result->sek_24h[i];
+        valid_price_points++;
         result->current_sek_kwh = result->sek_24h[i];
         result->power_w = result->power_24h[i];
         result->current_kwh += result->kwh_24h[i];
@@ -363,6 +518,10 @@ static bool dbd_parse_optimaestro_display_json(const char *json,
         result->current_kwh = (float)(ct->valuedouble / 1000.0);
       if (cJSON_IsNumber(cc))
         result->current_sek_h = (float)(cc->valuedouble / 100.0);
+    }
+
+    if (valid_price_points > 0) {
+      result->avg_sek_kwh_day /= (float)valid_price_points;
     }
 
     result->success = true;
@@ -409,11 +568,6 @@ static bool dbd_fetch_optimaestro_display_json(DbdFetchResult *result,
   return parsed;
 }
 
-static bool dbd_fetch_optimaestro_weather(DbdFetchResult *result) {
-  (void)result;
-  return false;
-}
-
 static const char *dbd_weather_code_summary(uint16_t code) {
   if (code == 0)
     return "Clear";
@@ -432,8 +586,8 @@ static const char *dbd_weather_code_summary(uint16_t code) {
   return "Forecast";
 }
 
-static bool dbd_parse_open_meteo_json(const char *json,
-                                      DbdFetchResult *result) {
+static bool dbd_parse_optimaestro_weather_json(const char *json,
+                                               DbdFetchResult *result) {
   if (json == NULL || result == NULL)
     return false;
 
@@ -441,102 +595,257 @@ static bool dbd_parse_open_meteo_json(const char *json,
   if (root == NULL)
     return false;
 
-  cJSON *hourly = cJSON_GetObjectItemCaseSensitive(root, "hourly");
-  cJSON *times = cJSON_GetObjectItemCaseSensitive(hourly, "time");
-  cJSON *temps = cJSON_GetObjectItemCaseSensitive(hourly, "temperature_2m");
-  cJSON *rain =
-      cJSON_GetObjectItemCaseSensitive(hourly, "precipitation_probability");
-  cJSON *codes = cJSON_GetObjectItemCaseSensitive(hourly, "weather_code");
-  cJSON *solar =
-      cJSON_GetObjectItemCaseSensitive(hourly, "shortwave_radiation");
-  cJSON *wind = cJSON_GetObjectItemCaseSensitive(hourly, "wind_speed_10m");
+  cJSON *meta = cJSON_GetObjectItemCaseSensitive(root, "meta");
+  cJSON *values = cJSON_GetObjectItemCaseSensitive(root, "values");
+  cJSON *interval_minutes_item =
+      cJSON_GetObjectItemCaseSensitive(meta, "interval_minutes");
 
-  if (!cJSON_IsArray(times) || !cJSON_IsArray(temps) || !cJSON_IsArray(rain) ||
-      !cJSON_IsArray(codes) || !cJSON_IsArray(solar) || !cJSON_IsArray(wind) ||
-      cJSON_GetArraySize(times) < 24 || cJSON_GetArraySize(temps) < 24 ||
-      cJSON_GetArraySize(rain) < 24 || cJSON_GetArraySize(codes) < 24 ||
-      cJSON_GetArraySize(solar) < 24 || cJSON_GetArraySize(wind) < 24) {
+  if (!cJSON_IsArray(values) || cJSON_GetArraySize(values) <= 0) {
     cJSON_Delete(root);
     return false;
   }
 
-  for (int i = 0; i < 24; i++) {
-    double temp_v = 0.0;
-    double rain_v = 0.0;
-    double code_v = 0.0;
-    double solar_v = 0.0;
-    double wind_v = 0.0;
-    cJSON *time_item = cJSON_GetArrayItem(times, i);
+  memset(result->temp_c_24h, 0, sizeof(result->temp_c_24h));
+  memset(result->rain_percent_24h, 0, sizeof(result->rain_percent_24h));
+  memset(result->weather_code_24h, 0, sizeof(result->weather_code_24h));
+  memset(result->shortwave_wm2_24h, 0, sizeof(result->shortwave_wm2_24h));
+  memset(result->wind_kmh_24h, 0, sizeof(result->wind_kmh_24h));
+  memset(result->weather_time_24h, 0, sizeof(result->weather_time_24h));
+  memset(result->temp_c_daily, 0, sizeof(result->temp_c_daily));
+  memset(result->rain_percent_daily, 0, sizeof(result->rain_percent_daily));
+  memset(result->weather_code_daily, 0, sizeof(result->weather_code_daily));
+  memset(result->wind_kmh_daily, 0, sizeof(result->wind_kmh_daily));
+  memset(result->weather_time_daily, 0, sizeof(result->weather_time_daily));
+  result->daily_count = 0;
 
-    if (!cJSON_IsString(time_item) ||
-        !read_number_array_item(temps, i, &temp_v) ||
-        !read_number_array_item(rain, i, &rain_v) ||
-        !read_number_array_item(codes, i, &code_v) ||
-        !read_number_array_item(solar, i, &solar_v) ||
-        !read_number_array_item(wind, i, &wind_v)) {
-      cJSON_Delete(root);
-      return false;
+  time_t now = time(NULL);
+  struct tm now_tm = {};
+  localtime_r(&now, &now_tm);
+  struct tm hour_tm = now_tm;
+  hour_tm.tm_min = 0;
+  hour_tm.tm_sec = 0;
+  time_t hour_start = mktime(&hour_tm);
+  struct tm day_tm = now_tm;
+  day_tm.tm_hour = 0;
+  day_tm.tm_min = 0;
+  day_tm.tm_sec = 0;
+  time_t day_start = mktime(&day_tm);
+
+  (void)interval_minutes_item;
+
+  WeatherBucketAccum hourly[DASHBOARD_WEATHER_HOURLY_POINTS] = {};
+  WeatherBucketAccum daily[DASHBOARD_WEATHER_DAILY_POINTS] = {};
+  float daily_temp_max[DASHBOARD_WEATHER_DAILY_POINTS];
+  bool daily_has_data[DASHBOARD_WEATHER_DAILY_POINTS] = {};
+  memset(daily_temp_max, 0, sizeof(daily_temp_max));
+
+  bool current_found = false;
+  time_t current_ts = 0;
+  float current_temp = 0.0f;
+  float current_precip = 0.0f;
+  float current_wind = 0.0f;
+  float current_solar = 0.0f;
+
+  int value_count = cJSON_GetArraySize(values);
+  for (int i = 0; i < value_count; i++) {
+    cJSON *item = cJSON_GetArrayItem(values, i);
+    double ts_v = 0.0;
+    double temp_v = 0.0;
+    double precip_v = 0.0;
+    double wind_v = 0.0;
+    double solar_v = 0.0;
+
+    if (!cJSON_IsObject(item) ||
+        !read_object_number_item(item, "timestamp", &ts_v) ||
+        !read_object_number_item(item, "temperature", &temp_v) ||
+        !read_object_number_item(item, "precipitation", &precip_v) ||
+        !read_object_number_item(item, "windspeed", &wind_v) ||
+        !read_object_number_item(item, "radiation_shortwave", &solar_v)) {
+      continue;
     }
 
-    result->temp_c_24h[i] = (float)temp_v;
-    result->rain_percent_24h[i] = (uint8_t)(rain_v < 0.0     ? 0.0
-                                            : rain_v > 100.0 ? 100.0
-                                                             : rain_v);
-    result->weather_code_24h[i] = (uint16_t)code_v;
-    result->shortwave_wm2_24h[i] = (uint16_t)(solar_v < 0.0 ? 0.0 : solar_v);
-    result->wind_kmh_24h[i] = (float)wind_v;
+    time_t ts = (time_t)ts_v;
+    float temp = (float)temp_v;
+    float precip = (float)(precip_v < 0.0 ? 0.0 : precip_v);
+    float wind = (float)(wind_v < 0.0 ? 0.0 : wind_v);
+    float solar = (float)(solar_v < 0.0 ? 0.0 : solar_v);
 
-    const char *time_text = time_item->valuestring;
-    if (strlen(time_text) >= 16) {
-      snprintf(result->weather_time_24h[i], sizeof(result->weather_time_24h[i]),
-               "%.5s", time_text + 11);
-    } else {
-      snprintf(result->weather_time_24h[i], sizeof(result->weather_time_24h[i]),
-               "%02d:00", i);
+    if (ts <= now) {
+      if (!current_found || ts >= current_ts) {
+        current_found = true;
+        current_ts = ts;
+        current_temp = temp;
+        current_precip = precip;
+        current_wind = wind;
+        current_solar = solar;
+      }
+    }
+
+    if (ts >= hour_start &&
+        ts < hour_start + (DASHBOARD_WEATHER_HOURLY_POINTS * 3600)) {
+      int hour_index = (int)((ts - hour_start) / 3600);
+      if (hour_index >= 0 && hour_index < DASHBOARD_WEATHER_HOURLY_POINTS) {
+        hourly[hour_index].temp_sum += temp;
+        hourly[hour_index].precip_sum += precip;
+        hourly[hour_index].wind_sum += wind;
+        if (wind > hourly[hour_index].wind_max)
+          hourly[hour_index].wind_max = wind;
+        hourly[hour_index].solar_sum += solar;
+        hourly[hour_index].count++;
+      }
+    }
+
+    if (ts >= day_start &&
+        ts < day_start + ((time_t)DASHBOARD_WEATHER_DAILY_POINTS * 86400)) {
+      int day_index = (int)((ts - day_start) / 86400);
+      if (day_index >= 0 && day_index < DASHBOARD_WEATHER_DAILY_POINTS) {
+        daily[day_index].temp_sum += temp;
+        daily[day_index].precip_sum += precip;
+        daily[day_index].wind_sum += wind;
+        if (wind > daily[day_index].wind_max)
+          daily[day_index].wind_max = wind;
+        daily[day_index].solar_sum += solar;
+        daily[day_index].count++;
+        if (!daily_has_data[day_index] || temp > daily_temp_max[day_index]) {
+          daily_temp_max[day_index] = temp;
+        }
+        daily_has_data[day_index] = true;
+      }
     }
   }
 
+  int hourly_valid = 0;
+  float last_temp = current_found ? current_temp : 0.0f;
+  uint8_t last_rain = dbd_precipitation_to_percent(current_precip);
+  uint16_t last_code =
+      dbd_infer_weather_code(current_precip, current_wind, current_solar);
+  uint16_t last_solar = (uint16_t)(current_solar < 0.0f ? 0.0f : current_solar);
+  float last_wind = current_wind;
+
+  for (int i = 0; i < DASHBOARD_WEATHER_HOURLY_POINTS; i++) {
+    time_t label_ts = hour_start + ((time_t)i * 3600);
+    dbd_format_weather_label(label_ts, result->weather_time_24h[i]);
+
+    if (hourly[i].count > 0) {
+      float avg_temp = hourly[i].temp_sum / (float)hourly[i].count;
+      float avg_wind = hourly[i].wind_sum / (float)hourly[i].count;
+      float avg_solar = hourly[i].solar_sum / (float)hourly[i].count;
+      uint8_t rain_percent = dbd_precipitation_to_percent(hourly[i].precip_sum);
+      uint16_t weather_code = dbd_infer_weather_code(
+          hourly[i].precip_sum, hourly[i].wind_max, avg_solar);
+
+      result->temp_c_24h[i] = avg_temp;
+      result->rain_percent_24h[i] = rain_percent;
+      result->weather_code_24h[i] = weather_code;
+      result->shortwave_wm2_24h[i] =
+          (uint16_t)(avg_solar < 0.0f ? 0.0f : avg_solar);
+      result->wind_kmh_24h[i] = avg_wind;
+
+      last_temp = avg_temp;
+      last_rain = rain_percent;
+      last_code = weather_code;
+      last_solar = result->shortwave_wm2_24h[i];
+      last_wind = avg_wind;
+      hourly_valid++;
+    } else {
+      result->temp_c_24h[i] = last_temp;
+      result->rain_percent_24h[i] = last_rain;
+      result->weather_code_24h[i] = last_code;
+      result->shortwave_wm2_24h[i] = last_solar;
+      result->wind_kmh_24h[i] = last_wind;
+    }
+  }
+
+  for (int i = 0; i < DASHBOARD_WEATHER_DAILY_POINTS; i++) {
+    if (!daily_has_data[i] || daily[i].count == 0)
+      continue;
+
+    struct tm label_tm = day_tm;
+    label_tm.tm_mday += i;
+    time_t label_ts = mktime(&label_tm);
+
+    result->temp_c_daily[i] = daily_temp_max[i];
+    result->rain_percent_daily[i] =
+        dbd_precipitation_to_percent(daily[i].precip_sum);
+    result->weather_code_daily[i] = dbd_infer_weather_code(
+        daily[i].precip_sum, daily[i].wind_max,
+        daily[i].solar_sum / (float)daily[i].count);
+    result->wind_kmh_daily[i] = daily[i].wind_max;
+    struct tm label_tm_local = {};
+    localtime_r(&label_ts, &label_tm_local);
+    strftime(result->weather_time_daily[i],
+             sizeof(result->weather_time_daily[i]), "%m-%d",
+             &label_tm_local);
+    result->daily_count = (uint8_t)(i + 1);
+  }
+
+  if (!current_found && hourly_valid > 0) {
+    current_temp = result->temp_c_24h[0];
+    current_precip = hourly[0].precip_sum;
+    current_wind = result->wind_kmh_24h[0];
+    current_solar = result->shortwave_wm2_24h[0];
+    current_found = true;
+  }
+
+  if (!current_found || hourly_valid == 0) {
+    cJSON_Delete(root);
+    return false;
+  }
+
   result->weather_success = true;
-  result->outdoor_c = result->temp_c_24h[0];
+  result->outdoor_c = current_temp;
   snprintf(result->weather_summary, sizeof(result->weather_summary), "%s",
-           dbd_weather_code_summary(result->weather_code_24h[0]));
+           dbd_weather_code_summary(
+               dbd_infer_weather_code(current_precip, current_wind, current_solar)));
 
   cJSON_Delete(root);
   return true;
 }
 
-static bool dbd_fetch_open_meteo_forecast(DbdFetchResult *result) {
+static bool dbd_fetch_optimaestro_weather(DbdFetchResult *result) {
   if (result == NULL)
     return false;
 
   Facility_Config cfg = {};
-  if (facility_config_load(&cfg) != ESP_OK || cfg.lat[0] == '\0' ||
-      cfg.lon[0] == '\0') {
-    ESP_LOGW(TAG, "Weather forecast skipped: facility coordinates missing");
+  if (facility_config_load(&cfg) != ESP_OK || cfg.facility_name[0] == '\0') {
+    ESP_LOGW(TAG, "Weather fetch skipped: facility configuration missing");
     return false;
   }
 
-  char url[OPEN_METEO_FORECAST_URL_MAX];
-  snprintf(url, sizeof(url),
-           "http://api.open-meteo.com/v1/forecast?"
-           "latitude=%s&longitude=%s&"
-           "hourly=temperature_2m,precipitation_probability,weather_code,"
-           "shortwave_radiation,wind_speed_10m&forecast_days=1&timezone=auto",
-           cfg.lat, cfg.lon);
+  time_t now = time(NULL);
+  struct tm now_tm = {};
+  localtime_r(&now, &now_tm);
+  now_tm.tm_min = 0;
+  now_tm.tm_sec = 0;
+  time_t hour_start = mktime(&now_tm);
+  struct tm day_tm = now_tm;
+  day_tm.tm_hour = 0;
+  time_t day_start = mktime(&day_tm);
+  time_t end = day_start + ((time_t)DASHBOARD_WEATHER_DAILY_POINTS * 86400);
 
-  char *response = (char *)calloc(1, OPEN_METEO_HTTP_MAX_BODY);
+  char encoded_name[96];
+  dbd_url_encode_query_value(cfg.facility_name, encoded_name,
+                             sizeof(encoded_name));
+
+  char url[OPTIMAESTRO_WEATHER_URL_MAX];
+  snprintf(url, sizeof(url),
+           "%s?forecast=1&from=%lld&to=%lld&name=%s",
+           OPTIMAESTRO_WEATHER_CACHE_URL, (long long)hour_start,
+           (long long)end, encoded_name);
+
+  char *response = (char *)calloc(1, OPTIMAESTRO_WEATHER_HTTP_MAX_BODY);
   if (response == NULL)
     return false;
 
-  if (!dbd_fetch_http_url(url, response, OPEN_METEO_HTTP_MAX_BODY,
-                          "Open-Meteo")) {
+  if (!dbd_fetch_http_url(url, response, OPTIMAESTRO_WEATHER_HTTP_MAX_BODY,
+                          "OptiMaestro weather")) {
     free(response);
     return false;
   }
 
-  bool parsed = dbd_parse_open_meteo_json(response, result);
+  bool parsed = dbd_parse_optimaestro_weather_json(response, result);
   if (!parsed)
-    ESP_LOGW(TAG, "Failed to parse Open-Meteo forecast data");
+    ESP_LOGW(TAG, "Failed to parse OptiMaestro weather data");
 
   free(response);
   return parsed;
@@ -596,10 +905,19 @@ void DashboardData::update_weather(float outdoor_c, float indoor_c,
 }
 
 void DashboardData::update_weather_forecast(
-    float outdoor_c, const char *summary, const float temp_c_24h[24],
-    const uint8_t rain_percent_24h[24], const uint16_t weather_code_24h[24],
-    const uint16_t shortwave_wm2_24h[24], const float wind_kmh_24h[24],
-    const char time_24h[24][6]) {
+    float outdoor_c, const char *summary,
+    const float temp_c_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
+    const uint8_t rain_percent_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
+    const uint16_t weather_code_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
+    const uint16_t shortwave_wm2_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
+    const float wind_kmh_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
+    const char time_24h[DASHBOARD_WEATHER_HOURLY_POINTS][6],
+    const float temp_c_daily[DASHBOARD_WEATHER_DAILY_POINTS],
+    const uint8_t rain_percent_daily[DASHBOARD_WEATHER_DAILY_POINTS],
+    const uint16_t weather_code_daily[DASHBOARD_WEATHER_DAILY_POINTS],
+    const float wind_kmh_daily[DASHBOARD_WEATHER_DAILY_POINTS],
+    const char time_daily[DASHBOARD_WEATHER_DAILY_POINTS][6],
+    uint8_t daily_count) {
   update_weather(outdoor_c, weatherdata_.indoor_c, summary);
 
   memcpy(weatherdata_.temp_c_24h, temp_c_24h, sizeof(weatherdata_.temp_c_24h));
@@ -612,15 +930,27 @@ void DashboardData::update_weather_forecast(
   memcpy(weatherdata_.wind_kmh_24h, wind_kmh_24h,
          sizeof(weatherdata_.wind_kmh_24h));
   memcpy(weatherdata_.time_24h, time_24h, sizeof(weatherdata_.time_24h));
+  memcpy(weatherdata_.temp_c_daily, temp_c_daily,
+         sizeof(weatherdata_.temp_c_daily));
+  memcpy(weatherdata_.rain_percent_daily, rain_percent_daily,
+         sizeof(weatherdata_.rain_percent_daily));
+  memcpy(weatherdata_.weather_code_daily, weather_code_daily,
+         sizeof(weatherdata_.weather_code_daily));
+  memcpy(weatherdata_.wind_kmh_daily, wind_kmh_daily,
+         sizeof(weatherdata_.wind_kmh_daily));
+  memcpy(weatherdata_.time_daily, time_daily, sizeof(weatherdata_.time_daily));
+  weatherdata_.daily_count = daily_count;
 }
 
 void DashboardData::update_electricity(
-    float current_sek_kwh, const float sek_24h[DASHBOARD_ENERGY_MAX_POINTS],
+    float current_sek_kwh, float avg_sek_kwh_day,
+    const float sek_24h[DASHBOARD_ENERGY_MAX_POINTS],
     uint8_t point_count, uint16_t interval_minutes,
     const char labels[DASHBOARD_ENERGY_MAX_POINTS][6],
     const bool has_data[DASHBOARD_ENERGY_MAX_POINTS]) {
   electricitydata_.valid = true;
   electricitydata_.current_sek_kwh = current_sek_kwh;
+  electricitydata_.avg_sek_kwh_day = avg_sek_kwh_day;
   memcpy(electricitydata_.sek_24h, sek_24h, sizeof(electricitydata_.sek_24h));
   electricitydata_.point_count = point_count;
   electricitydata_.interval_minutes = interval_minutes;
@@ -632,8 +962,9 @@ void DashboardData::update_electricity(
 }
 
 void DashboardData::update_realtime(
-    uint32_t power_w, uint32_t max_power_w_24h, float current_kwh,
-    float current_sek_h, const uint32_t power_24h[DASHBOARD_ENERGY_MAX_POINTS],
+    uint32_t power_w, uint32_t historical_avg_power_w,
+    uint32_t max_power_w_24h, float current_kwh, float current_sek_h,
+    const uint32_t power_24h[DASHBOARD_ENERGY_MAX_POINTS],
     const float kwh_24h[DASHBOARD_ENERGY_MAX_POINTS],
     const float cost_24h[DASHBOARD_ENERGY_MAX_POINTS], uint8_t point_count,
     uint16_t interval_minutes,
@@ -641,6 +972,7 @@ void DashboardData::update_realtime(
     const bool has_data[DASHBOARD_ENERGY_MAX_POINTS]) {
   realtimedata_.valid = true;
   realtimedata_.power_w = power_w;
+  realtimedata_.historical_avg_power_w = historical_avg_power_w;
   realtimedata_.max_power_w_24h = max_power_w_24h;
   realtimedata_.current_kwh = current_kwh;
   realtimedata_.current_sek_h = current_sek_h;
@@ -700,9 +1032,6 @@ static void dbd_fetch_worker_task(void *_context) {
     result.range = range;
     result.success = dbd_fetch_optimaestro_display_json(&result, range);
     result.weather_success = dbd_fetch_optimaestro_weather(&result);
-    if (!result.weather_success) {
-      result.weather_success = dbd_fetch_open_meteo_forecast(&result);
-    }
 
     if (self != NULL && self->fetch_result_queue != NULL) {
       xQueueOverwrite(self->fetch_result_queue, &result);
@@ -762,14 +1091,19 @@ static DashboardDataStatus dbd_wait_response(DashboardData *self,
     self->update_weather_forecast(
         result.outdoor_c, result.weather_summary, result.temp_c_24h,
         result.rain_percent_24h, result.weather_code_24h,
-        result.shortwave_wm2_24h, result.wind_kmh_24h, result.weather_time_24h);
+        result.shortwave_wm2_24h, result.wind_kmh_24h, result.weather_time_24h,
+        result.temp_c_daily, result.rain_percent_daily,
+        result.weather_code_daily, result.wind_kmh_daily,
+        result.weather_time_daily, result.daily_count);
   }
 
   if (result.success && !stale_energy_result) {
-    self->update_electricity(result.current_sek_kwh, result.sek_24h,
+    self->update_electricity(result.current_sek_kwh, result.avg_sek_kwh_day,
+                             result.sek_24h,
                              result.point_count, result.interval_minutes,
                              result.labels, result.has_data);
-    self->update_realtime(result.power_w, result.max_power_w_24h,
+    self->update_realtime(result.power_w, result.historical_avg_power_w,
+                          result.max_power_w_24h,
                           result.current_kwh, result.current_sek_h,
                           result.power_24h, result.kwh_24h, result.cost_24h,
                           result.point_count, result.interval_minutes,
@@ -781,7 +1115,7 @@ static DashboardDataStatus dbd_wait_response(DashboardData *self,
     return DBD_STATE_REQUEST_DATA;
   }
 
-  self->next_fetch_ms = now_ms + OPTIMAESTRO_FETCH_INTERVAL_MS;
+  self->next_fetch_ms = dbd_next_aligned_fetch_ms(now_ms);
   return DBD_STATE_UPDATE_GRAPHS;
 }
 

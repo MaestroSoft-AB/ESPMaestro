@@ -20,6 +20,7 @@ extern "C" {
 #include <cJSON.h>
 
 static const char *TAG = "main";
+static constexpr uint32_t DISPLAY_HANDLER_TASK_STACK = 16384;
 
 static DH display_context = {};
 
@@ -138,7 +139,8 @@ extern "C" void app_main(void) {
   } else {
 
     /*  Start display worker task only on init success */
-    if (xTaskCreate(display_handler_work, "display_handler_work", 12288, NULL,
+    if (xTaskCreate(display_handler_work, "display_handler_work",
+                    DISPLAY_HANDLER_TASK_STACK, NULL,
                     3, NULL) != pdPASS) {
       ESP_LOGE(TAG, "Failed to create display_handler_work task");
     }
