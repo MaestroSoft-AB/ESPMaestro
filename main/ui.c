@@ -63,6 +63,7 @@ static void ui_create_settings_card(UI *_UI, lv_obj_t *_parent, lv_obj_t **_out,
                                     const char *_title, const char *_sub,
                                     lv_color_t _accent);
 static void ui_set_label_text_if_changed(lv_obj_t *label, const char *text);
+static const char *ui_data_error_text(const char *error, const char *fallback);
 static const char *ui_home_weather_icon_text(const char *summary);
 static void ui_home_weather_sentence(const WeatherData *weather, char *buf,
                                      size_t buf_len);
@@ -78,6 +79,7 @@ static void ui_update_home_meter_card(UI *_UI);
 static void ui_update_home_indoor_climate_cards(UI *_UI);
 static void ui_update_home_price_bucket_label(UI *_UI);
 static void ui_update_forecast_data(UI *ui, const WeatherData *weather);
+static void ui_update_forecast_unavailable(UI *ui, const WeatherData *weather);
 static int ui_forecast_table_page_count(const UI *ui);
 static int ui_forecast_point_count(const UI *ui);
 static int ui_forecast_tick_count(const UI *ui);
@@ -935,13 +937,27 @@ void ui_set_dashboard_data(UI *ui, const WeatherData *weather,
   ui->cached_realtime = *realtime;
   ui->has_dashboard_data = true;
 
-  if (weather->valid) {
-    ui_update_forecast_data(ui, weather);
-  }
+  ui_update_forecast_data(ui, weather);
 
   ui_update_home_metrics(ui);
 
   if (realtime->valid == false) {
+    if (ui->energy_kwh_chart)
+      lv_obj_add_flag(ui->energy_kwh_chart, LV_OBJ_FLAG_HIDDEN);
+    if (ui->energy_cost_chart)
+      lv_obj_add_flag(ui->energy_cost_chart, LV_OBJ_FLAG_HIDDEN);
+    if (ui->energy_power_chart)
+      lv_obj_add_flag(ui->energy_power_chart, LV_OBJ_FLAG_HIDDEN);
+    if (ui->energy_power_label) {
+      ui_set_label_text_if_changed(
+          ui->energy_power_label,
+          ui_data_error_text(realtime->last_error, "Waiting for energy data"));
+      lv_obj_clear_flag(ui->energy_power_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ui->energy_max_power_label) {
+      ui_set_label_text_if_changed(ui->energy_max_power_label, "");
+      lv_obj_clear_flag(ui->energy_max_power_label, LV_OBJ_FLAG_HIDDEN);
+    }
     return;
   }
 
@@ -1426,6 +1442,12 @@ static void ui_set_label_text_if_changed(lv_obj_t *label, const char *text) {
   lv_label_set_text(label, text);
 }
 
+static const char *ui_data_error_text(const char *error, const char *fallback) {
+  if (error && error[0] != '\0')
+    return error;
+  return fallback ? fallback : "";
+}
+
 static void ui_home_weather_summary_lower(const char *summary, char *buf,
                                           size_t buf_len) {
   if (!buf || buf_len == 0)
@@ -1476,7 +1498,9 @@ static void ui_home_weather_sentence(const WeatherData *weather, char *buf,
 
   buf[0] = '\0';
   if (!weather || !weather->valid) {
-    snprintf(buf, buf_len, "Waiting for weather");
+    snprintf(buf, buf_len, "%s",
+             ui_data_error_text(weather ? weather->last_error : NULL,
+                                "Waiting for weather"));
     return;
   }
 
@@ -2027,7 +2051,9 @@ static void ui_update_home_meter_card(UI *_UI) {
     } else if (_UI->cached_realtime.valid) {
       snprintf(sub, sizeof(sub), "%.2f kWh today", _UI->cached_realtime.current_kwh);
     } else {
-      snprintf(sub, sizeof(sub), "Waiting for meter data");
+      snprintf(sub, sizeof(sub), "%s",
+               ui_data_error_text(_UI->cached_realtime.last_error,
+                                  "Waiting for meter data"));
     }
     ui_set_label_text_if_changed(_UI->home_meter_sub_label, sub);
   }
@@ -2111,15 +2137,64 @@ static void ui_update_home_price_bucket_label(UI *_UI) {
       snprintf(sub, sizeof(sub), "Price per kWh is %s",
                ui_trend_word(trend));
     } else {
-      snprintf(sub, sizeof(sub), "Waiting for price data");
+      snprintf(sub, sizeof(sub), "%s",
+               ui_data_error_text(_UI->cached_electricity.last_error,
+                                  "Waiting for price data"));
     }
     ui_set_label_text_if_changed(_UI->home_price_sub_label, sub);
   }
 }
 
-static void ui_update_forecast_data(UI *ui, const WeatherData *weather) {
-  if (!ui || !weather || !weather->valid)
+static void ui_update_forecast_unavailable(UI *ui, const WeatherData *weather) {
+  if (!ui)
     return;
+
+  const char *error_text =
+      ui_data_error_text(weather ? weather->last_error : NULL,
+                         "Forecast data unavailable");
+
+  if (ui->forecast_chart && ui->forecast_temp_series) {
+    lv_chart_set_range(ui->forecast_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 1);
+    lv_chart_set_point_count(ui->forecast_chart, UI_FORECAST_CHART_POINTS);
+    for (int i = 0; i < UI_FORECAST_CHART_POINTS; i++) {
+      lv_chart_set_value_by_id(ui->forecast_chart, ui->forecast_temp_series, i,
+                               0);
+    }
+    lv_chart_refresh(ui->forecast_chart);
+  }
+
+  if (ui->forecast_table) {
+    lv_table_set_col_cnt(ui->forecast_table, 1);
+    lv_table_set_row_cnt(ui->forecast_table, 2);
+    lv_table_set_cell_value(ui->forecast_table, 0, 0,
+                            ui->forecast_range == UI_RANGE_24H
+                                ? "24h"
+                                : (ui->forecast_range == UI_RANGE_7D ? "7 days"
+                                                                     : "30 days"));
+    lv_table_set_cell_value(ui->forecast_table, 1, 0, error_text);
+  }
+
+  if (ui->forecast_table_page_label) {
+    ui_set_label_text_if_changed(ui->forecast_table_page_label, "1 / 1");
+  }
+  if (ui->forecast_table_prev_btn) {
+    lv_obj_add_state(ui->forecast_table_prev_btn, LV_STATE_DISABLED);
+  }
+  if (ui->forecast_table_next_btn) {
+    lv_obj_add_state(ui->forecast_table_next_btn, LV_STATE_DISABLED);
+  }
+
+  ui_apply_forecast_view(ui);
+}
+
+static void ui_update_forecast_data(UI *ui, const WeatherData *weather) {
+  if (!ui || !weather)
+    return;
+
+  if (!weather->valid) {
+    ui_update_forecast_unavailable(ui, weather);
+    return;
+  }
 
   ui_update_forecast_range_buttons(ui);
   if (ui->forecast_x_axis_label) {
@@ -2841,11 +2916,7 @@ static void forecast_range_event_cb(lv_event_t *_event) {
   ui->forecast_range = (UI_Range)(uintptr_t)lv_obj_get_user_data(btn);
   ui->forecast_table_page = 0;
   ui_update_forecast_range_buttons(ui);
-  if (ui->cached_weather.valid) {
-    ui_update_forecast_data(ui, &ui->cached_weather);
-  } else {
-    ui_apply_forecast_view(ui);
-  }
+  ui_update_forecast_data(ui, &ui->cached_weather);
   if (ui->forecast_range == UI_RANGE_24H && ui->forecast_table &&
       !lv_obj_has_flag(ui->forecast_table, LV_OBJ_FLAG_HIDDEN)) {
     if (ui->forecast_table_prev_btn)

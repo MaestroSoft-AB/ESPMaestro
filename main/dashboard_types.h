@@ -6,6 +6,7 @@
 #define DASHBOARD_ENERGY_MAX_POINTS 30
 #define DASHBOARD_WEATHER_HOURLY_POINTS 24
 #define DASHBOARD_WEATHER_DAILY_POINTS 30
+#define DASHBOARD_ERROR_TEXT_MAX 96
 
 typedef struct {
   bool valid;
@@ -24,6 +25,7 @@ typedef struct {
   float wind_kmh_daily[DASHBOARD_WEATHER_DAILY_POINTS];
   char time_daily[DASHBOARD_WEATHER_DAILY_POINTS][6];
   uint8_t daily_count;
+  char last_error[DASHBOARD_ERROR_TEXT_MAX];
   uint32_t updated_epoch;
 } WeatherData;
 
@@ -36,6 +38,7 @@ typedef struct {
   uint16_t interval_minutes;
   char labels[DASHBOARD_ENERGY_MAX_POINTS][6];
   bool has_data[DASHBOARD_ENERGY_MAX_POINTS];
+  char last_error[DASHBOARD_ERROR_TEXT_MAX];
   uint32_t updated_epoch;
 } ElectricityData;
 
@@ -55,5 +58,6 @@ typedef struct {
   char labels[DASHBOARD_ENERGY_MAX_POINTS][6];
   bool has_data[DASHBOARD_ENERGY_MAX_POINTS];
 
+  char last_error[DASHBOARD_ERROR_TEXT_MAX];
   uint32_t updated_epoch;
 } RealtimeData;

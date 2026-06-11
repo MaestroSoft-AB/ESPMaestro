@@ -115,6 +115,7 @@ public:
    * @param summary Short weather summary text.
    */
   void update_weather(float outdoor_c, float indoor_c, const char *summary);
+  void set_weather_error(const char *error);
 
   void update_weather_forecast(float outdoor_c, const char *summary,
                                const float temp_c_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
@@ -142,6 +143,7 @@ public:
                           uint8_t point_count, uint16_t interval_minutes,
                           const char labels[DASHBOARD_ENERGY_MAX_POINTS][6],
                           const bool has_data[DASHBOARD_ENERGY_MAX_POINTS]);
+  void set_energy_error(const char *error);
 
   /**
    * @brief Update cached realtime energy consumption data.

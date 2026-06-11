@@ -57,6 +57,7 @@ typedef struct {
 
 typedef struct {
   bool success;
+  char display_error[DASHBOARD_ERROR_TEXT_MAX];
   DashboardEnergyRange range;
   float current_sek_kwh;
   float avg_sek_kwh_day;
@@ -74,6 +75,7 @@ typedef struct {
   char labels[DASHBOARD_ENERGY_MAX_POINTS][6];
   bool has_data[DASHBOARD_ENERGY_MAX_POINTS];
   bool weather_success;
+  char weather_error[DASHBOARD_ERROR_TEXT_MAX];
   float outdoor_c;
   char weather_summary[32];
   float temp_c_24h[DASHBOARD_WEATHER_HOURLY_POINTS];
@@ -102,6 +104,14 @@ static uint8_t dbd_precipitation_to_percent(float mm);
 static uint16_t dbd_infer_weather_code(float precipitation_mm, float wind_kmh,
                                        float shortwave_wm2);
 static void dbd_format_weather_label(time_t stamp, char out[6]);
+static void dbd_copy_text(char *out, size_t out_size, const char *text);
+static void dbd_format_backend_error(const char *message, char *out,
+                                     size_t out_size);
+static void dbd_extract_backend_error(const char *response, char *out,
+                                      size_t out_size);
+static void dbd_build_fetch_error(const char *label, esp_err_t err, int status,
+                                  const char *response, int response_len,
+                                  char *out, size_t out_size);
 /*------------------------------------*/
 
 static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
@@ -171,6 +181,94 @@ static void dbd_format_weather_label(time_t stamp, char out[6]) {
   struct tm tm = {};
   localtime_r(&stamp, &tm);
   strftime(out, 6, "%H:%M", &tm);
+}
+
+static void dbd_copy_text(char *out, size_t out_size, const char *text) {
+  if (!out || out_size == 0)
+    return;
+
+  snprintf(out, out_size, "%s", text ? text : "");
+}
+
+static void dbd_format_backend_error(const char *message, char *out,
+                                     size_t out_size) {
+  if (!out || out_size == 0)
+    return;
+
+  out[0] = '\0';
+  if (!message || message[0] == '\0')
+    return;
+
+  if (strstr(message, "facility not found") != NULL) {
+    dbd_copy_text(out, out_size, "Facility not found on server");
+  } else if (strstr(message, "display graph not available") != NULL) {
+    dbd_copy_text(out, out_size, "Energy report not ready on server");
+  } else if (strstr(message, "invalid latitude/longitude") != NULL) {
+    dbd_copy_text(out, out_size, "Invalid facility coordinates");
+  } else if (strstr(message, "invalid energy_zone") != NULL) {
+    dbd_copy_text(out, out_size, "Invalid energy zone");
+  } else if (strstr(message, "invalid panel_tilt") != NULL ||
+             strstr(message, "invalid panel_azimuth") != NULL) {
+    dbd_copy_text(out, out_size, "Invalid solar panel settings");
+  } else if (strstr(message, "no facility available") != NULL) {
+    dbd_copy_text(out, out_size, "No facility available on server");
+  } else {
+    dbd_copy_text(out, out_size, message);
+  }
+}
+
+static void dbd_extract_backend_error(const char *response, char *out,
+                                      size_t out_size) {
+  if (!out || out_size == 0)
+    return;
+
+  out[0] = '\0';
+  if (!response || response[0] == '\0')
+    return;
+
+  cJSON *root = cJSON_Parse(response);
+  if (root != NULL) {
+    cJSON *error = cJSON_GetObjectItemCaseSensitive(root, "error");
+    if (cJSON_IsString(error) && error->valuestring != NULL) {
+      dbd_format_backend_error(error->valuestring, out, out_size);
+    }
+    cJSON_Delete(root);
+  }
+
+  if (out[0] == '\0') {
+    dbd_format_backend_error(response, out, out_size);
+  }
+}
+
+static void dbd_build_fetch_error(const char *label, esp_err_t err, int status,
+                                  const char *response, int response_len,
+                                  char *out, size_t out_size) {
+  if (!out || out_size == 0)
+    return;
+
+  out[0] = '\0';
+
+  if (response != NULL && response_len > 0) {
+    dbd_extract_backend_error(response, out, out_size);
+    if (out[0] != '\0')
+      return;
+  }
+
+  if (err == ESP_ERR_HTTP_EAGAIN) {
+    dbd_copy_text(out, out_size, "Server timeout");
+  } else if (err != ESP_OK) {
+    dbd_copy_text(out, out_size, "Server unavailable");
+  } else if (status == 404) {
+    dbd_copy_text(out, out_size, "Requested data not found");
+  } else if (status >= 500) {
+    if (label != NULL && strstr(label, "weather") != NULL) {
+      dbd_copy_text(out, out_size, "Weather cache not ready on server");
+    } else {
+      dbd_copy_text(out, out_size, "Server error");
+    }
+  } else {
+    dbd_copy_text(out, out_size, "Failed to fetch server data");
+  }
 }
 
 static bool dbd_wall_clock_ready(time_t epoch_now) {
@@ -261,11 +359,15 @@ static uint16_t dbd_infer_weather_code(float precipitation_mm, float wind_kmh,
 }
 
 static bool dbd_fetch_http_url(const char *url, char *response,
-                               int response_capacity, const char *label) {
+                               int response_capacity, const char *label,
+                               char *error_out, size_t error_out_size) {
   if (url == NULL || response == NULL || response_capacity <= 0)
     return false;
 
   memset(response, 0, response_capacity);
+  if (error_out != NULL && error_out_size > 0) {
+    error_out[0] = '\0';
+  }
 
   HttpBuffer buffer = {
       .data = response,
@@ -280,8 +382,10 @@ static bool dbd_fetch_http_url(const char *url, char *response,
   config.user_data = &buffer;
 
   esp_http_client_handle_t client = esp_http_client_init(&config);
-  if (client == NULL)
+  if (client == NULL) {
+    dbd_copy_text(error_out, error_out_size, "HTTP client init failed");
     return false;
+  }
 
   esp_err_t err = esp_http_client_perform(client);
   int status = esp_http_client_get_status_code(client);
@@ -297,6 +401,8 @@ static bool dbd_fetch_http_url(const char *url, char *response,
       ESP_LOGW(TAG, "%s response body: %.*s", label ? label : "HTTP", log_len,
                response);
     }
+    dbd_build_fetch_error(label, err, status, response, buffer.len, error_out,
+                          error_out_size);
     esp_http_client_cleanup(client);
     return false;
   }
@@ -540,6 +646,14 @@ static bool dbd_fetch_optimaestro_display_json(DbdFetchResult *result,
   if (result == NULL)
     return false;
 
+  Facility_Config cfg = {};
+  if (facility_config_load(&cfg) != ESP_OK || cfg.facility_name[0] == '\0') {
+    ESP_LOGW(TAG, "Display fetch skipped: facility configuration missing");
+    dbd_copy_text(result->display_error, sizeof(result->display_error),
+                  "Complete facility setup first");
+    return false;
+  }
+
   char *response = (char *)calloc(1, OPTIMAESTRO_DISPLAY_HTTP_MAX_BODY);
   if (response == NULL)
     return false;
@@ -551,12 +665,23 @@ static bool dbd_fetch_optimaestro_display_json(DbdFetchResult *result,
     range_param = "30d";
   }
 
-  char url[256];
-  snprintf(url, sizeof(url), "%s?range=%s", OPTIMAESTRO_DISPLAY_GRAPH_URL,
-           range_param);
+  char encoded_name[96];
+  char encoded_lat[32];
+  char encoded_lon[32];
+  dbd_url_encode_query_value(cfg.facility_name, encoded_name,
+                             sizeof(encoded_name));
+  dbd_url_encode_query_value(cfg.lat, encoded_lat, sizeof(encoded_lat));
+  dbd_url_encode_query_value(cfg.lon, encoded_lon, sizeof(encoded_lon));
+
+  char url[320];
+  snprintf(url, sizeof(url),
+           "%s?range=%s&name=%s&latitude=%s&longitude=%s&energy_zone=%u",
+           OPTIMAESTRO_DISPLAY_GRAPH_URL, range_param, encoded_name,
+           encoded_lat, encoded_lon, (unsigned int)cfg.energy_zone);
 
   if (!dbd_fetch_http_url(url, response, OPTIMAESTRO_DISPLAY_HTTP_MAX_BODY,
-                          "OptiMaestro display")) {
+                          "OptiMaestro display", result->display_error,
+                          sizeof(result->display_error))) {
     free(response);
     return false;
   }
@@ -564,6 +689,12 @@ static bool dbd_fetch_optimaestro_display_json(DbdFetchResult *result,
   bool parsed = dbd_parse_optimaestro_display_json(response, result);
   if (!parsed)
     ESP_LOGW(TAG, "Failed to parse OptiMaestro display data");
+  if (!parsed) {
+    dbd_copy_text(result->display_error, sizeof(result->display_error),
+                  "Invalid energy data from server");
+  } else {
+    result->display_error[0] = '\0';
+  }
 
   free(response);
   return parsed;
@@ -810,6 +941,8 @@ static bool dbd_fetch_optimaestro_weather(DbdFetchResult *result) {
   Facility_Config cfg = {};
   if (facility_config_load(&cfg) != ESP_OK || cfg.facility_name[0] == '\0') {
     ESP_LOGW(TAG, "Weather fetch skipped: facility configuration missing");
+    dbd_copy_text(result->weather_error, sizeof(result->weather_error),
+                  "Complete facility setup first");
     return false;
   }
 
@@ -825,21 +958,27 @@ static bool dbd_fetch_optimaestro_weather(DbdFetchResult *result) {
   time_t end = day_start + ((time_t)DASHBOARD_WEATHER_DAILY_POINTS * 86400);
 
   char encoded_name[96];
+  char encoded_lat[32];
+  char encoded_lon[32];
   dbd_url_encode_query_value(cfg.facility_name, encoded_name,
                              sizeof(encoded_name));
+  dbd_url_encode_query_value(cfg.lat, encoded_lat, sizeof(encoded_lat));
+  dbd_url_encode_query_value(cfg.lon, encoded_lon, sizeof(encoded_lon));
 
   char url[OPTIMAESTRO_WEATHER_URL_MAX];
   snprintf(url, sizeof(url),
-           "%s?forecast=1&from=%lld&to=%lld&name=%s",
+           "%s?forecast=1&from=%lld&to=%lld&name=%s&latitude=%s&longitude=%s&energy_zone=%u",
            OPTIMAESTRO_WEATHER_CACHE_URL, (long long)hour_start,
-           (long long)end, encoded_name);
+           (long long)end, encoded_name, encoded_lat, encoded_lon,
+           (unsigned int)cfg.energy_zone);
 
   char *response = (char *)calloc(1, OPTIMAESTRO_WEATHER_HTTP_MAX_BODY);
   if (response == NULL)
     return false;
 
   if (!dbd_fetch_http_url(url, response, OPTIMAESTRO_WEATHER_HTTP_MAX_BODY,
-                          "OptiMaestro weather")) {
+                          "OptiMaestro weather", result->weather_error,
+                          sizeof(result->weather_error))) {
     free(response);
     return false;
   }
@@ -847,6 +986,12 @@ static bool dbd_fetch_optimaestro_weather(DbdFetchResult *result) {
   bool parsed = dbd_parse_optimaestro_weather_json(response, result);
   if (!parsed)
     ESP_LOGW(TAG, "OptiMaestro weather cache not ready or parse failed");
+  if (!parsed) {
+    dbd_copy_text(result->weather_error, sizeof(result->weather_error),
+                  "Invalid weather data from server");
+  } else {
+    result->weather_error[0] = '\0';
+  }
 
   free(response);
   return parsed;
@@ -899,10 +1044,16 @@ void DashboardData::update_weather(float outdoor_c, float indoor_c,
   weatherdata_.valid = true;
   weatherdata_.outdoor_c = outdoor_c;
   weatherdata_.indoor_c = indoor_c;
+  weatherdata_.last_error[0] = '\0';
 
   snprintf(weatherdata_.summary, sizeof(weatherdata_.summary), "%s",
            summary ? summary : "");
 
+  weatherdata_.updated_epoch = (uint32_t)time(NULL);
+}
+
+void DashboardData::set_weather_error(const char *error) {
+  dbd_copy_text(weatherdata_.last_error, sizeof(weatherdata_.last_error), error);
   weatherdata_.updated_epoch = (uint32_t)time(NULL);
 }
 
@@ -953,6 +1104,7 @@ void DashboardData::update_electricity(
   electricitydata_.valid = true;
   electricitydata_.current_sek_kwh = current_sek_kwh;
   electricitydata_.avg_sek_kwh_day = avg_sek_kwh_day;
+  electricitydata_.last_error[0] = '\0';
   memcpy(electricitydata_.sek_24h, sek_24h, sizeof(electricitydata_.sek_24h));
   electricitydata_.point_count = point_count;
   electricitydata_.interval_minutes = interval_minutes;
@@ -961,6 +1113,15 @@ void DashboardData::update_electricity(
          sizeof(electricitydata_.has_data));
 
   electricitydata_.updated_epoch = (uint32_t)time(NULL);
+}
+
+void DashboardData::set_energy_error(const char *error) {
+  dbd_copy_text(electricitydata_.last_error, sizeof(electricitydata_.last_error),
+                error);
+  dbd_copy_text(realtimedata_.last_error, sizeof(realtimedata_.last_error),
+                error);
+  electricitydata_.updated_epoch = (uint32_t)time(NULL);
+  realtimedata_.updated_epoch = (uint32_t)time(NULL);
 }
 
 void DashboardData::update_realtime(
@@ -978,6 +1139,7 @@ void DashboardData::update_realtime(
   realtimedata_.max_power_w_24h = max_power_w_24h;
   realtimedata_.current_kwh = current_kwh;
   realtimedata_.current_sek_h = current_sek_h;
+  realtimedata_.last_error[0] = '\0';
   memcpy(realtimedata_.power_24h, power_24h, sizeof(realtimedata_.power_24h));
   memcpy(realtimedata_.kwh_24h, kwh_24h, sizeof(realtimedata_.kwh_24h));
   memcpy(realtimedata_.cost_24h, cost_24h, sizeof(realtimedata_.cost_24h));
@@ -1102,6 +1264,12 @@ static DashboardDataStatus dbd_wait_response(DashboardData *self,
   self->pending_range_refresh_ = false;
 
   if (!result.success && !result.weather_success) {
+    self->set_energy_error(result.display_error[0] != '\0'
+                               ? result.display_error
+                               : "Energy data unavailable");
+    self->set_weather_error(result.weather_error[0] != '\0'
+                                ? result.weather_error
+                                : "Weather data unavailable");
     if (pending_range_refresh || stale_energy_result) {
       self->next_fetch_ms = now_ms;
       return DBD_STATE_REQUEST_DATA;
@@ -1114,10 +1282,10 @@ static DashboardDataStatus dbd_wait_response(DashboardData *self,
         return DBD_STATE_REQUEST_DATA;
       }
       self->next_fetch_ms = manual_refresh_ms;
-      return DBD_STATE_IDLE;
+      return DBD_STATE_UPDATE_GRAPHS;
     }
     self->next_fetch_ms = now_ms + OPTIMAESTRO_FETCH_RETRY_MS;
-    return DBD_STATE_IDLE;
+    return DBD_STATE_UPDATE_GRAPHS;
   }
 
   if (result.weather_success) {
@@ -1128,6 +1296,8 @@ static DashboardDataStatus dbd_wait_response(DashboardData *self,
         result.temp_c_daily, result.rain_percent_daily,
         result.weather_code_daily, result.wind_kmh_daily,
         result.weather_time_daily, result.daily_count);
+  } else if (result.weather_error[0] != '\0') {
+    self->set_weather_error(result.weather_error);
   }
 
   if (result.success && !stale_energy_result) {
@@ -1141,6 +1311,9 @@ static DashboardDataStatus dbd_wait_response(DashboardData *self,
                           result.power_24h, result.kwh_24h, result.cost_24h,
                           result.point_count, result.interval_minutes,
                           result.labels, result.has_data);
+  } else if (!result.success && !stale_energy_result &&
+             result.display_error[0] != '\0') {
+    self->set_energy_error(result.display_error);
   }
 
   if (pending_range_refresh || stale_energy_result) {
