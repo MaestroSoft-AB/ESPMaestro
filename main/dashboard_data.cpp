@@ -1,6 +1,7 @@
 #include "dashboard_data.hpp"
 #include "cJSON.h"
 #include "display_handler.h"
+#include "esp_timer.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "facility_config.h"
@@ -845,7 +846,7 @@ static bool dbd_fetch_optimaestro_weather(DbdFetchResult *result) {
 
   bool parsed = dbd_parse_optimaestro_weather_json(response, result);
   if (!parsed)
-    ESP_LOGW(TAG, "Failed to parse OptiMaestro weather data");
+    ESP_LOGW(TAG, "OptiMaestro weather cache not ready or parse failed");
 
   free(response);
   return parsed;
@@ -857,7 +858,8 @@ DashboardData::DashboardData()
     : initialized_(false), state(DBD_STATE_IDLE), need_weatherdata(true),
       need_electricitydata(true), need_realtimedata(true), task(nullptr),
       fetch_task(NULL), fetch_result_queue(NULL), fetch_in_progress(false),
-      pending_range_refresh_(false), energy_range_(DASHBOARD_ENERGY_RANGE_24H),
+      pending_range_refresh_(false), pending_manual_refresh_(false),
+      energy_range_(DASHBOARD_ENERGY_RANGE_24H), manual_refresh_ms_(0),
       base_epoch(0), base_ms(0), next_fetch_ms(0) {
   g_dashboard_data_instance = this;
   fetch_result_queue = xQueueCreate(1, sizeof(DbdFetchResult));
@@ -1000,6 +1002,25 @@ void DashboardData::request_energy_range(DashboardEnergyRange range) {
   next_fetch_ms = 0;
 }
 
+void DashboardData::request_refresh(uint32_t delay_ms) {
+  uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+  uint64_t target_ms = now_ms + (uint64_t)delay_ms;
+
+  if (fetch_in_progress) {
+    if (!pending_manual_refresh_ || target_ms < manual_refresh_ms_) {
+      manual_refresh_ms_ = target_ms;
+    }
+    pending_manual_refresh_ = true;
+    return;
+  }
+
+  pending_manual_refresh_ = false;
+  manual_refresh_ms_ = 0;
+  if (next_fetch_ms == 0 || target_ms < next_fetch_ms) {
+    next_fetch_ms = target_ms;
+  }
+}
+
 void DashboardData::send_to_display_handler() {
   display_handler_update_dashboard(&weatherdata_, &electricitydata_,
                                    &realtimedata_);
@@ -1076,12 +1097,24 @@ static DashboardDataStatus dbd_wait_response(DashboardData *self,
   self->fetch_in_progress = false;
   bool stale_energy_result = result.range != self->energy_range_;
   bool pending_range_refresh = self->pending_range_refresh_;
+  bool pending_manual_refresh = self->pending_manual_refresh_;
+  uint64_t manual_refresh_ms = self->manual_refresh_ms_;
   self->pending_range_refresh_ = false;
 
   if (!result.success && !result.weather_success) {
     if (pending_range_refresh || stale_energy_result) {
       self->next_fetch_ms = now_ms;
       return DBD_STATE_REQUEST_DATA;
+    }
+    if (pending_manual_refresh) {
+      if (manual_refresh_ms <= now_ms) {
+        self->pending_manual_refresh_ = false;
+        self->manual_refresh_ms_ = 0;
+        self->next_fetch_ms = now_ms;
+        return DBD_STATE_REQUEST_DATA;
+      }
+      self->next_fetch_ms = manual_refresh_ms;
+      return DBD_STATE_IDLE;
     }
     self->next_fetch_ms = now_ms + OPTIMAESTRO_FETCH_RETRY_MS;
     return DBD_STATE_IDLE;
@@ -1113,6 +1146,21 @@ static DashboardDataStatus dbd_wait_response(DashboardData *self,
   if (pending_range_refresh || stale_energy_result) {
     self->next_fetch_ms = now_ms;
     return DBD_STATE_REQUEST_DATA;
+  }
+
+  if (pending_manual_refresh) {
+    if (manual_refresh_ms <= now_ms) {
+      self->pending_manual_refresh_ = false;
+      self->manual_refresh_ms_ = 0;
+      self->next_fetch_ms = now_ms;
+      return DBD_STATE_REQUEST_DATA;
+    }
+
+    uint64_t aligned_fetch_ms = dbd_next_aligned_fetch_ms(now_ms);
+    self->next_fetch_ms = manual_refresh_ms < aligned_fetch_ms
+                              ? manual_refresh_ms
+                              : aligned_fetch_ms;
+    return DBD_STATE_UPDATE_GRAPHS;
   }
 
   self->next_fetch_ms = dbd_next_aligned_fetch_ms(now_ms);
@@ -1168,6 +1216,12 @@ extern "C" void
 dashboard_data_request_energy_range(DashboardEnergyRange range) {
   if (g_dashboard_data_instance != nullptr) {
     g_dashboard_data_instance->request_energy_range(range);
+  }
+}
+
+extern "C" void dashboard_data_request_refresh(uint32_t delay_ms) {
+  if (g_dashboard_data_instance != nullptr) {
+    g_dashboard_data_instance->request_refresh(delay_ms);
   }
 }
 

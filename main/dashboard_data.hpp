@@ -84,7 +84,9 @@ public:
   /** @brief True while a fetch operation is currently running. */
   bool fetch_in_progress;
   bool pending_range_refresh_;
+  bool pending_manual_refresh_;
   DashboardEnergyRange energy_range_;
+  uint64_t manual_refresh_ms_;
 
   /** @brief Reference Unix epoch used for local time calculations. */
   uint64_t base_epoch;
@@ -164,6 +166,7 @@ public:
                        const bool has_data[DASHBOARD_ENERGY_MAX_POINTS]);
 
   void request_energy_range(DashboardEnergyRange range);
+  void request_refresh(uint32_t delay_ms);
 
   /**
    * @brief Send the currently cached dashboard data to the display handler.

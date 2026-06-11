@@ -10,6 +10,15 @@
 static const char *TAG = "lv_port";          // Tag for logging
 static SemaphoreHandle_t lvgl_mux;           // LVGL mutex for synchronization
 static TaskHandle_t lvgl_task_handle = NULL; // Handle for the LVGL task
+static volatile bool touch_irq_pending = true;
+static int64_t touch_last_poll_us = 0;
+static lv_indev_state_t touch_last_state = LV_INDEV_STATE_RELEASED;
+static lv_point_t touch_last_point = {0, 0};
+
+#define LVGL_PORT_TOUCH_READ_PERIOD_MS (8)
+#define LVGL_PORT_REFR_PERIOD_MS (16)
+#define LVGL_PORT_TOUCH_ACTIVE_POLL_US (8000)
+#define LVGL_PORT_TOUCH_IDLE_POLL_US (50000)
 
 #if EXAMPLE_LVGL_PORT_ROTATION_DEGREE != 0
 // Function to get the next frame buffer for double buffering
@@ -482,32 +491,49 @@ static lv_disp_t *display_init(esp_lcd_panel_handle_t panel_handle) {
   return lv_disp_drv_register(&disp_drv); // Register the display driver
 }
 
+static void IRAM_ATTR touch_interrupt_cb(esp_lcd_touch_handle_t tp) {
+  (void)tp;
+  touch_irq_pending = true;
+}
+
 static void touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
   esp_lcd_touch_handle_t tp =
       (esp_lcd_touch_handle_t)
           indev_drv->user_data; // Get touchpad handle from user data
   assert(tp);                   // Ensure touchpad handle is valid
 
-  uint16_t touchpad_x;      // Variable for X coordinate
-  uint16_t touchpad_y;      // Variable for Y coordinate
-  uint8_t touchpad_cnt = 0; // Variable for touch count
+  int64_t now_us = esp_timer_get_time();
+  int64_t poll_interval_us = (touch_last_state == LV_INDEV_STATE_PRESSED)
+                                 ? LVGL_PORT_TOUCH_ACTIVE_POLL_US
+                                 : LVGL_PORT_TOUCH_IDLE_POLL_US;
+  bool should_poll =
+      touch_irq_pending || (now_us - touch_last_poll_us) >= poll_interval_us;
 
-  /* Read data from touch controller into memory */
-  esp_lcd_touch_read_data(tp); // Read data from touch controller
+  if (should_poll) {
+    uint16_t touchpad_x = 0;
+    uint16_t touchpad_y = 0;
+    uint8_t touchpad_cnt = 0;
 
-  /* Read data from touch controller */
-  bool touchpad_pressed =
-      esp_lcd_touch_get_coordinates(tp, &touchpad_x, &touchpad_y, NULL,
-                                    &touchpad_cnt, 1); // Get touch coordinates
-  if (touchpad_pressed && touchpad_cnt > 0) {
-    data->point.x = touchpad_x;           // Set the X coordinate
-    data->point.y = touchpad_y;           // Set the Y coordinate
-    data->state = LV_INDEV_STATE_PRESSED; // Set state to pressed
-    ESP_LOGD(TAG, "Touch position: %d,%d", touchpad_x, touchpad_y); // Log
-    // touch position
-  } else {
-    data->state = LV_INDEV_STATE_RELEASED; // Set state to released
+    touch_irq_pending = false;
+    touch_last_poll_us = now_us;
+
+    esp_lcd_touch_read_data(tp);
+
+    bool touchpad_pressed =
+        esp_lcd_touch_get_coordinates(tp, &touchpad_x, &touchpad_y, NULL,
+                                      &touchpad_cnt, 1);
+    if (touchpad_pressed && touchpad_cnt > 0) {
+      touch_last_point.x = touchpad_x;
+      touch_last_point.y = touchpad_y;
+      touch_last_state = LV_INDEV_STATE_PRESSED;
+      ESP_LOGD(TAG, "Touch position: %d,%d", touchpad_x, touchpad_y);
+    } else {
+      touch_last_state = LV_INDEV_STATE_RELEASED;
+    }
   }
+
+  data->point = touch_last_point;
+  data->state = touch_last_state;
 }
 
 static lv_indev_t *indev_init(esp_lcd_touch_handle_t tp) {
@@ -521,9 +547,12 @@ static lv_indev_t *indev_init(esp_lcd_touch_handle_t tp) {
       LV_INDEV_TYPE_POINTER; // Set the device type to pointer (touchpad)
   indev_drv_tp.read_cb = touchpad_read; // Set the read callback function
   indev_drv_tp.user_data = tp; // Set user data to the touch panel handle
+  lv_indev_t *indev = lv_indev_drv_register(&indev_drv_tp);
+  if (indev_drv_tp.read_timer) {
+    lv_timer_set_period(indev_drv_tp.read_timer, LVGL_PORT_TOUCH_READ_PERIOD_MS);
+  }
 
-  return lv_indev_drv_register(
-      &indev_drv_tp); // Register the input device driver
+  return indev; // Register the input device driver
 }
 
 static void tick_increment(void *arg) {
@@ -572,11 +601,17 @@ esp_err_t lvgl_port_init(esp_lcd_panel_handle_t lcd_handle,
 
   lv_disp_t *disp = display_init(lcd_handle); // Initialize the display
   assert(disp); // Ensure the display initialization was successful
+  if (disp->refr_timer) {
+    lv_timer_set_period(disp->refr_timer, LVGL_PORT_REFR_PERIOD_MS);
+  }
 
   if (tp_handle) {
     lv_indev_t *indev =
         indev_init(tp_handle); // Initialize the touchpad input device
     assert(indev); // Ensure the input device initialization was successful
+    touch_irq_pending = true;
+    (void)esp_lcd_touch_register_interrupt_callback_with_data(
+        tp_handle, touch_interrupt_cb, NULL);
 
     // Set touch panel orientation based on rotation
 #if EXAMPLE_LVGL_PORT_ROTATION_90

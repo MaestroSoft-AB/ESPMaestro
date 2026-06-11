@@ -1,4 +1,5 @@
 #include "facility_config.h"
+#include "dashboard_data_api.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "freertos/queue.h"
@@ -21,6 +22,7 @@ static const char *TAG = "facility_config";
 #define FACILITY_CONFIG_BODY_MAX 384
 #define FACILITY_CONFIG_URL_MAX 256
 #define FACILITY_CONFIG_NAME_ENCODED_MAX 96
+#define FACILITY_CONFIG_POST_REFRESH_DELAY_MS 30000
 
 static Facility_Config s_cfg;
 static SemaphoreHandle_t s_mutex;
@@ -137,6 +139,7 @@ esp_err_t facility_config_set_all(const Facility_Config *cfg) {
     if (err == ESP_OK) {
       s_cfg = saved_cfg;
       facility_config_queue_sync(&saved_cfg);
+      dashboard_data_request_refresh(0);
     }
     return err;
   }
@@ -224,6 +227,7 @@ static esp_err_t facility_config_post_to_optimizer(const Facility_Config *cfg) {
 
   if (err == ESP_OK && status >= 200 && status < 300) {
     ESP_LOGI(TAG, "Facility config posted to optimizer: status=%d", status);
+    dashboard_data_request_refresh(FACILITY_CONFIG_POST_REFRESH_DELAY_MS);
   } else {
     ESP_LOGW(TAG, "Facility config post failed: url=%s err=%s status=%d", url,
              esp_err_to_name(err), status);
