@@ -119,12 +119,7 @@ bool bme280::read() {
     ESP_LOGW(TAG, "Failed to read BME280 data: %d", res);
     return false;
   }
-
-  latest_.valid = true;
-  latest_.temperature_c = data.temperature;
-  latest_.humidity_rh = data.humidity;
-  latest_.pressure_hpa = data.pressure / 100.0f;
-  latest_.updated_epoch = (uint32_t)time(nullptr);
+  latest_ = make_reading(data, (uint32_t)time(nullptr));
 
   return true;
 }
@@ -169,6 +164,19 @@ BME280_INTF_RET_TYPE bme280::i2c_write(uint8_t reg_addr,
   esp_err_t err = i2c_master_transmit(dev, buffer, len + 1, pdMS_TO_TICKS(100));
 
   return err == ESP_OK ? BME280_INTF_RET_SUCCESS : BME280_E_COMM_FAIL;
+}
+
+bme280_reading bme280::make_reading(const struct bme280_data &data,
+                                    uint32_t epoch) {
+  bme280_reading reading = {};
+
+  reading.valid = true;
+  reading.temperature_c = data.temperature;
+  reading.humidity_rh = data.humidity;
+  reading.pressure_hpa = data.pressure / 100.0f;
+  reading.updated_epoch = epoch;
+
+  return reading;
 }
 
 void bme280::delay_us(uint32_t period, void *intf_ptr) {
