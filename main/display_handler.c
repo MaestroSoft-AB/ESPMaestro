@@ -4,6 +4,7 @@
 #include "display_handler.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/task.h"
 #include "gpio.h"
 #include "gt911.h"
@@ -67,6 +68,16 @@ static bool g_footer_ready = false;
 static char g_footer_text[128] = {0};
 static SemaphoreHandle_t g_footer_mutex = NULL;
 
+/*-------------------------------------------------------*/
+static bool i2c_lock(TickType_t timeout) {
+  return g_dh.i2c_mutex && xSemaphoreTake(g_dh.i2c_mutex, timeout) == pdTRUE;
+}
+
+static void i2c_unlock(void) {
+  if (g_dh.i2c_mutex) {
+    xSemaphoreGive(g_dh.i2c_mutex);
+  }
+}
 /* -------------------------------WIFI CALLBACKS----------------------- */
 void on_wifi_scan_done(const Wifi_Handler_ap *_aps, uint16_t _count) {
   if (!g_wifi_status_mutex) {
@@ -139,23 +150,43 @@ static esp_lcd_touch_handle_t display_handler_touch_init(DEV_I2C_Port *port) {
   esp_lcd_panel_io_i2c_config_t tp_io_config =
       ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
 
+  if (!i2c_lock(pdMS_TO_TICKS(1000))) {
+    ESP_LOGE(TAG, "I2C lock timeout during IO extension init");
+    return NULL;
+  }
+
   IO_EXTENSION_Init();
   DEV_GPIO_Mode(EXAMPLE_PIN_NUM_TOUCH_INT, GPIO_MODE_INPUT_OUTPUT);
   IO_EXTENSION_Output(IO_EXTENSION_IO_1, 0);
 
+  i2c_unlock();
+
   vTaskDelay(pdMS_TO_TICKS(100));
+
   DEV_Digital_Write(EXAMPLE_PIN_NUM_TOUCH_INT, 0);
 
   vTaskDelay(pdMS_TO_TICKS(100));
+
+  if (!i2c_lock(pdMS_TO_TICKS(1000))) {
+    ESP_LOGE(TAG, "I2C lock timeout during touch reset release");
+    return NULL;
+  }
   IO_EXTENSION_Output(IO_EXTENSION_IO_1, 1);
+  i2c_unlock();
 
   vTaskDelay(pdMS_TO_TICKS(200));
 
   ESP_LOGI(TAG, "Initialize GT911 I2C panel IO using shared bus");
 
+  if (!i2c_lock(pdMS_TO_TICKS(1000))) {
+    ESP_LOGE(TAG, "I2C lock timeout during touch panel IO init");
+    return NULL;
+  }
+
   esp_err_t err =
       esp_lcd_new_panel_io_i2c(port->bus, &tp_io_config, &touch_io_handle);
 
+  i2c_unlock();
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_lcd_new_panel_io_i2c failed: %s", esp_err_to_name(err));
     return NULL;
@@ -181,8 +212,12 @@ static esp_lcd_touch_handle_t display_handler_touch_init(DEV_I2C_Port *port) {
 
   esp_lcd_touch_handle_t touch = NULL;
 
+  if (!i2c_lock(pdMS_TO_TICKS(1000))) {
+    ESP_LOGE(TAG, "I2C lock timeout during touch panel IO init");
+    return NULL;
+  }
   err = esp_lcd_touch_new_i2c_gt911(touch_io_handle, &tp_cfg, &touch);
-
+  i2c_unlock();
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_lcd_touch_new_i2c_gt911 failed: %s",
              esp_err_to_name(err));
@@ -251,7 +286,8 @@ void display_handler_update_live_power(uint32_t power_w) {
     return;
 
   if (xSemaphoreTake(g_live_power_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-    if (g_live_power_status.has_value && g_live_power_status.power_w == power_w) {
+    if (g_live_power_status.has_value &&
+        g_live_power_status.power_w == power_w) {
       xSemaphoreGive(g_live_power_mutex);
       return;
     }
@@ -322,6 +358,10 @@ int display_handler_init(DH *_DH) {
     ESP_LOGE(TAG, "display_handler_init missing shared I2C bus");
     return -1;
   }
+  if (_DH->i2c_mutex == NULL) {
+    ESP_LOGE(TAG, "display_handler_init missing shared I2C mutex");
+    return -1;
+  }
 
   g_dh = *_DH;
 
@@ -337,13 +377,20 @@ int display_handler_init(DH *_DH) {
     return -1;
   }
 
+  if (!i2c_lock(pdMS_TO_TICKS(1000))) {
+    ESP_LOGE(TAG, "I2C lock timeout during LCD backlight enable");
+    return -1;
+  }
+
+  wavesahre_rgb_lcd_bl_on();
+
+  i2c_unlock();
+
   esp_err_t err = lvgl_port_init(panel_handle, tp_handle);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "lvgl_port_init failed");
     return -1;
   }
-
-  wavesahre_rgb_lcd_bl_on();
 
   ESP_LOGI(TAG, "Display handler initialized successfully");
 
@@ -402,19 +449,33 @@ void display_handler_work(void *_null_for_now) {
   (void)_null_for_now;
 
   if (lvgl_port_lock(-1)) {
+    int64_t init_start_us = esp_timer_get_time();
+
     ui_init(&g_ui);
     ui_set_footer_text(&g_ui, "UI init completed");
-    // perf_overlay_init();
+
+    int64_t init_elapsed_us = esp_timer_get_time() - init_start_us;
     lvgl_port_unlock();
+
+    ESP_LOGI(TAG, "Initial UI init took %lld us", init_elapsed_us);
+  } else {
+    ESP_LOGE(TAG, "Failed to lock LVGL for initial UI init");
+    return;
   }
 
   ESP_LOGI(TAG, "UI initialized, starting loop..");
 
   TickType_t x_last_wake = xTaskGetTickCount();
-  const TickType_t x_freq =
-      pdMS_TO_TICKS(33); /* ~30 Hz overlay/update cadence */
+  const TickType_t x_freq = pdMS_TO_TICKS(150);
 
   while (1) {
+    if (!g_wifi_status_mutex && !g_time_status_mutex && !g_date_status_mutex &&
+        !g_indoor_climate_mutex && !g_live_power_mutex && !g_dashboard_mutex &&
+        !g_setup_mutex && !g_footer_mutex) {
+      vTaskDelayUntil(&x_last_wake, x_freq);
+      continue;
+    }
+
     bool need_ui_update = false;
     bool need_time_update = false;
     bool need_date_update = false;
@@ -441,7 +502,8 @@ void display_handler_work(void *_null_for_now) {
       xSemaphoreGive(g_wifi_status_mutex);
     }
 
-    if (lvgl_port_lock(-1)) {
+    if (lvgl_port_lock(50)) {
+
       if (need_ui_update) {
         if (g_wifi_status_mutex &&
             xSemaphoreTake(g_wifi_status_mutex, 0) == pdTRUE) {
@@ -477,12 +539,10 @@ void display_handler_work(void *_null_for_now) {
 
       if (g_time_status_mutex &&
           xSemaphoreTake(g_time_status_mutex, 0) == pdTRUE) {
-
         if (g_time_status.time_ready) {
           g_time_status.time_ready = false;
           need_time_update = true;
         }
-
         xSemaphoreGive(g_time_status_mutex);
       }
 
@@ -578,10 +638,10 @@ void display_handler_work(void *_null_for_now) {
         ui_set_footer_text(&g_ui, footer_text);
       }
 
-      /* Perf overlay tick */
-      // perf_overlay_tick();
-
       lvgl_port_unlock();
+
+    } else {
+      ESP_LOGW(TAG, "display_work LVGL lock timeout");
     }
 
     vTaskDelayUntil(&x_last_wake, x_freq);

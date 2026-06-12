@@ -29,6 +29,7 @@ extern "C" {
 typedef struct {
   /** @brief Shared I2C port used by display-related peripherals. */
   DEV_I2C_Port i2c;
+  SemaphoreHandle_t i2c_mutex;
 } DH;
 
 /**
@@ -196,7 +197,6 @@ void display_handler_update_time(uint8_t h, uint8_t m, uint8_t s);
  */
 void display_handler_update_date(uint16_t year, uint8_t month, uint8_t day);
 void display_handler_update_live_power(uint32_t power_w);
-
 /**
  * @brief Queue dashboard data for display.
  *

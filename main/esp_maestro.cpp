@@ -134,18 +134,27 @@ extern "C" void app_main(void) {
     return;
   }
 
+  display_context.i2c_mutex = xSemaphoreCreateMutex();
+
+  if (!display_context.i2c_mutex) {
+    ESP_LOGE(TAG, "Failed to create I2C mutex");
+    return;
+  }
+
+  if (display_context.i2c.bus == NULL) {
+    ESP_LOGE(TAG, "Failed to init shared I2C bus");
+    return;
+  }
+
   if (display_handler_init(&display_context) != 0) {
     ESP_LOGE(TAG, "Failed to init display_handler");
   } else {
 
     /*  Start display worker task only on init success */
     if (xTaskCreate(display_handler_work, "display_handler_work",
-                    DISPLAY_HANDLER_TASK_STACK, NULL,
-                    3, NULL) != pdPASS) {
+                    DISPLAY_HANDLER_TASK_STACK, NULL, 1, NULL) != pdPASS) {
       ESP_LOGE(TAG, "Failed to create display_handler_work task");
     }
-
-    sensor.start(display_context.i2c.bus, 2000);
 
     if (scheduler_init() != 0) {
       ESP_LOGE(TAG, "Failed to init scheduler");
@@ -160,6 +169,7 @@ extern "C" void app_main(void) {
       ESP_LOGE(TAG, "Failed to create live_power_task");
     }
   }
+  sensor.start(display_context.i2c.bus, display_context.i2c_mutex, 2000);
 
   if (wifi_handler_init(on_wifi_scan_done, on_wifi_status) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to init wifi manager");

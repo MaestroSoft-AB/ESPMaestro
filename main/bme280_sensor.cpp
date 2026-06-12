@@ -55,11 +55,14 @@ bool bme280::init_at_address(i2c_master_bus_handle_t bus, uint8_t address) {
   dev_handle_ = temp_dev;
   address_ = address;
 
+  i2c_ctx_.dev = dev_handle_;
+  i2c_ctx_.mutex = i2c_mutex_;
+
   bosch_dev_.intf = BME280_I2C_INTF;
   bosch_dev_.read = bme280::i2c_read;
   bosch_dev_.write = bme280::i2c_write;
   bosch_dev_.delay_us = bme280::delay_us;
-  bosch_dev_.intf_ptr = &dev_handle_;
+  bosch_dev_.intf_ptr = &i2c_ctx_;
 
   int8_t res = bme280_init(&bosch_dev_);
 
@@ -137,10 +140,18 @@ BME280_INTF_RET_TYPE bme280::i2c_read(uint8_t reg_addr, uint8_t *reg_data,
   if (intf_ptr == nullptr || reg_data == nullptr)
     return BME280_E_NULL_PTR;
 
-  auto dev = *static_cast<i2c_master_dev_handle_t *>(intf_ptr);
+  auto ctx = static_cast<bme280_i2c_context *>(intf_ptr);
 
-  esp_err_t err = i2c_master_transmit_receive(dev, &reg_addr, 1, reg_data, len,
-                                              pdMS_TO_TICKS(100));
+  if (ctx->dev == nullptr || ctx->mutex == nullptr)
+    return BME280_E_COMM_FAIL;
+
+  if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    return BME280_E_COMM_FAIL;
+
+  esp_err_t err = i2c_master_transmit_receive(ctx->dev, &reg_addr, 1, reg_data,
+                                              len, pdMS_TO_TICKS(100));
+
+  xSemaphoreGive(ctx->mutex);
 
   return err == ESP_OK ? BME280_INTF_RET_SUCCESS : BME280_E_COMM_FAIL;
 }
@@ -151,7 +162,10 @@ BME280_INTF_RET_TYPE bme280::i2c_write(uint8_t reg_addr,
   if (intf_ptr == nullptr || reg_data == nullptr)
     return BME280_E_NULL_PTR;
 
-  auto dev = *static_cast<i2c_master_dev_handle_t *>(intf_ptr);
+  auto ctx = static_cast<bme280_i2c_context *>(intf_ptr);
+
+  if (ctx->dev == nullptr || ctx->mutex == nullptr)
+    return BME280_E_COMM_FAIL;
 
   uint8_t buffer[32];
 
@@ -161,7 +175,13 @@ BME280_INTF_RET_TYPE bme280::i2c_write(uint8_t reg_addr,
   buffer[0] = reg_addr;
   memcpy(&buffer[1], reg_data, len);
 
-  esp_err_t err = i2c_master_transmit(dev, buffer, len + 1, pdMS_TO_TICKS(100));
+  if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    return BME280_E_COMM_FAIL;
+
+  esp_err_t err =
+      i2c_master_transmit(ctx->dev, buffer, len + 1, pdMS_TO_TICKS(100));
+
+  xSemaphoreGive(ctx->mutex);
 
   return err == ESP_OK ? BME280_INTF_RET_SUCCESS : BME280_E_COMM_FAIL;
 }
@@ -184,12 +204,14 @@ void bme280::delay_us(uint32_t period, void *intf_ptr) {
   esp_rom_delay_us(period);
 }
 
-bool bme280::start(i2c_master_bus_handle_t bus, uint32_t interval_ms) {
+bool bme280::start(i2c_master_bus_handle_t bus, SemaphoreHandle_t i2c_mutex,
+                   uint32_t interval_ms) {
   if (api_task_ != nullptr) {
     return true;
   }
 
   bus_ = bus;
+  i2c_mutex_ = i2c_mutex;
   api_interval_ms_ = interval_ms;
 
   return xTaskCreate(api_task_entry, "bme280", BME280_TASK_STACK, this,
@@ -205,6 +227,8 @@ void bme280::stop() {
 
 void bme280::api_task_entry(void *arg) {
   bme280 *self = static_cast<bme280 *>(arg);
+
+  vTaskDelay(pdMS_TO_TICKS(2000));
 
   while (1) {
     if (!self->initialized_) {

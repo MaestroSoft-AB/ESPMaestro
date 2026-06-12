@@ -5,6 +5,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdint.h>
+
+struct bme280_i2c_context {
+  i2c_master_dev_handle_t dev;
+  SemaphoreHandle_t mutex;
+};
+
 /**
  * @brief Cached environmental reading from the BME280 sensor.
  */
@@ -103,7 +109,8 @@ public:
    * @return true if the task is already running or was created successfully,
    * false if task creation failed.
    */
-  bool start(i2c_master_bus_handle_t bus, uint32_t interval_ms = 2000);
+  bool start(i2c_master_bus_handle_t bus, SemaphoreHandle_t i2c_mutex,
+             uint32_t interval_ms = 2000);
 
   /**
    * @brief Stop the background FreeRTOS task if it is running.
@@ -125,6 +132,9 @@ private:
 
   /** @brief I2C device handle registered for the active BME280 address. */
   i2c_master_dev_handle_t dev_handle_ = nullptr;
+
+  SemaphoreHandle_t i2c_mutex_ = nullptr;
+  bme280_i2c_context i2c_ctx_ = {};
 
   /** @brief Bosch BME280 driver context and callback configuration. */
   struct bme280_dev bosch_dev_ = {};
