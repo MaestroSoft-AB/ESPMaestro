@@ -100,7 +100,7 @@ uint16_t DEV_I2C_Read_Word(i2c_master_dev_handle_t dev_handle, uint8_t Cmd);
  * @param pdata A pointer to the data to write.
  * @param len The number of bytes to write.
  */
-void DEV_I2C_Write_Nbyte(i2c_master_dev_handle_t dev_handle, uint8_t *pdata, uint8_t len);
+esp_err_t DEV_I2C_Write_Nbyte(i2c_master_dev_handle_t dev_handle, uint8_t *pdata, uint8_t len);
 
 /**
  * @brief Read multiple bytes from the I2C device.

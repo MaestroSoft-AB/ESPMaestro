@@ -13,6 +13,7 @@
  ******************************************************************************/
 #include "io_extension.h"  // Include IO_EXTENSION driver header for GPIO functions
  
+static const char *TAG = "io_extension";
 io_extension_obj_t IO_EXTENSION;  // Define the global IO_EXTENSION object
 
 /**
@@ -26,7 +27,10 @@ void IO_EXTENSION_IO_Mode(uint8_t pin)
 {
     uint8_t data[2] = {IO_EXTENSION_Mode, pin}; // Prepare the data to write to the mode register
     // Write the 8-bit value to the IO mode register
-    DEV_I2C_Write_Nbyte(IO_EXTENSION.addr, data, 2);
+    esp_err_t err = DEV_I2C_Write_Nbyte(IO_EXTENSION.addr, data, 2);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set IO mode: %s", esp_err_to_name(err));
+    }
 }
 
 /**
@@ -58,6 +62,8 @@ void IO_EXTENSION_Init()
  */
 void IO_EXTENSION_Output(uint8_t pin, uint8_t value) 
 {
+    uint8_t previous = IO_EXTENSION.Last_io_value;
+
     // Update the output value based on the pin and value
     if (value == 1)
         IO_EXTENSION.Last_io_value |= (1 << pin); // Set the pin high
@@ -66,7 +72,11 @@ void IO_EXTENSION_Output(uint8_t pin, uint8_t value)
 
     uint8_t data[2] = {IO_EXTENSION_IO_OUTPUT_ADDR, IO_EXTENSION.Last_io_value}; // Prepare the data to write to the output register
     // Write the 8-bit value to the IO output register
-    DEV_I2C_Write_Nbyte(IO_EXTENSION.addr, data, 2);
+    esp_err_t err = DEV_I2C_Write_Nbyte(IO_EXTENSION.addr, data, 2);
+    if (err != ESP_OK) {
+        IO_EXTENSION.Last_io_value = previous;
+        ESP_LOGW(TAG, "Failed to set IO%u output: %s", pin, esp_err_to_name(err));
+    }
 }
 
 /**
@@ -108,7 +118,10 @@ void IO_EXTENSION_Pwm_Output(uint8_t Value)
     // Calculate the duty cycle based on the resolution (12 bits)
     data[1] = Value * (255 / 100.0);
     // Write the 8-bit value to the PWM output register
-    DEV_I2C_Write_Nbyte(IO_EXTENSION.addr, data, 2);
+    esp_err_t err = DEV_I2C_Write_Nbyte(IO_EXTENSION.addr, data, 2);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set PWM output: %s", esp_err_to_name(err));
+    }
 }
 
 /**

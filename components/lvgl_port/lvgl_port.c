@@ -19,6 +19,11 @@ static lv_point_t touch_last_point = {0, 0};
 #define LVGL_PORT_REFR_PERIOD_MS (16)
 #define LVGL_PORT_TOUCH_ACTIVE_POLL_US (8000)
 #define LVGL_PORT_TOUCH_IDLE_POLL_US (50000)
+#define LVGL_PORT_LATENCY_TRACE (1)
+#define LVGL_PORT_FLUSH_WARN_US (20000)
+#define LVGL_PORT_TOUCH_READ_WARN_US (10000)
+#define LVGL_PORT_HANDLER_WARN_US (20000)
+#define LVGL_PORT_LOOP_GAP_WARN_US (100000)
 
 #if EXAMPLE_LVGL_PORT_ROTATION_DEGREE != 0
 // Function to get the next frame buffer for double buffering
@@ -214,6 +219,7 @@ static void flush_dirty_copy(void *dst, void *src,
 
 static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
                            lv_color_t *color_map) {
+  int64_t flush_start_us = esp_timer_get_time();
   esp_lcd_panel_handle_t panel_handle =
       (esp_lcd_panel_handle_t)
           drv->user_data;        // Get the panel handle from driver user data
@@ -301,6 +307,7 @@ static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
 
 static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
                            lv_color_t *color_map) {
+  int64_t flush_start_us = esp_timer_get_time();
   esp_lcd_panel_handle_t panel_handle =
       (esp_lcd_panel_handle_t)
           drv->user_data;        // Get the panel handle from driver user data
@@ -319,6 +326,19 @@ static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
     ulTaskNotifyValueClear(NULL, ULONG_MAX);
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   }
+
+#if LVGL_PORT_LATENCY_TRACE
+  int64_t flush_us = esp_timer_get_time() - flush_start_us;
+  if (flush_us >= LVGL_PORT_FLUSH_WARN_US) {
+    ESP_LOGW(TAG, "LVGL_TRACE flush slow: %lld us area=%dx%d last=%d",
+             (long long)flush_us, offsetx2 - offsetx1 + 1,
+             offsety2 - offsety1 + 1, lv_disp_flush_is_last(drv));
+  } else {
+    ESP_LOGD(TAG, "LVGL_TRACE flush: %lld us area=%dx%d last=%d",
+             (long long)flush_us, offsetx2 - offsetx1 + 1,
+             offsety2 - offsety1 + 1, lv_disp_flush_is_last(drv));
+  }
+#endif
 
   lv_disp_flush_ready(drv); // Mark the display flush as complete
 }
@@ -358,6 +378,7 @@ static void *lvgl_port_flush_next_buf =
 
 void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
                     lv_color_t *color_map) {
+  int64_t flush_start_us = esp_timer_get_time();
   esp_lcd_panel_handle_t panel_handle =
       (esp_lcd_panel_handle_t)
           drv->user_data;        // Get the panel handle from driver user data
@@ -393,6 +414,19 @@ void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
   lvgl_port_rgb_next_buf = color_map; // Update the next RGB buffer
 #endif
 
+#if LVGL_PORT_LATENCY_TRACE
+  int64_t flush_us = esp_timer_get_time() - flush_start_us;
+  if (flush_us >= LVGL_PORT_FLUSH_WARN_US) {
+    ESP_LOGW(TAG, "LVGL_TRACE flush slow: %lld us area=%dx%d last=%d",
+             (long long)flush_us, offsetx2 - offsetx1 + 1,
+             offsety2 - offsety1 + 1, lv_disp_flush_is_last(drv));
+  } else {
+    ESP_LOGD(TAG, "LVGL_TRACE flush: %lld us area=%dx%d last=%d",
+             (long long)flush_us, offsetx2 - offsetx1 + 1,
+             offsety2 - offsety1 + 1, lv_disp_flush_is_last(drv));
+  }
+#endif
+
   lv_disp_flush_ready(drv); // Mark the display flush as complete
 }
 #endif
@@ -401,6 +435,7 @@ void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
 
 void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
                     lv_color_t *color_map) {
+  int64_t flush_start_us = esp_timer_get_time();
   esp_lcd_panel_handle_t panel_handle =
       (esp_lcd_panel_handle_t)
           drv->user_data;        // Get the panel handle from driver user data
@@ -412,6 +447,19 @@ void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
   /* Just copy data from the color map to the RGB frame buffer */
   esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1,
                             offsety2 + 1, color_map);
+
+#if LVGL_PORT_LATENCY_TRACE
+  int64_t flush_us = esp_timer_get_time() - flush_start_us;
+  if (flush_us >= LVGL_PORT_FLUSH_WARN_US) {
+    ESP_LOGW(TAG, "LVGL_TRACE flush slow: %lld us area=%dx%d last=%d",
+             (long long)flush_us, offsetx2 - offsetx1 + 1,
+             offsety2 - offsety1 + 1, lv_disp_flush_is_last(drv));
+  } else {
+    ESP_LOGD(TAG, "LVGL_TRACE flush: %lld us area=%dx%d last=%d",
+             (long long)flush_us, offsetx2 - offsetx1 + 1,
+             offsety2 - offsety1 + 1, lv_disp_flush_is_last(drv));
+  }
+#endif
 
   lv_disp_flush_ready(drv); // Mark the display flush as complete
 }
@@ -513,6 +561,8 @@ static void touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
     uint16_t touchpad_x = 0;
     uint16_t touchpad_y = 0;
     uint8_t touchpad_cnt = 0;
+    lv_indev_state_t previous_state = touch_last_state;
+    int64_t read_start_us = esp_timer_get_time();
 
     touch_irq_pending = false;
     touch_last_poll_us = now_us;
@@ -530,6 +580,23 @@ static void touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
     } else {
       touch_last_state = LV_INDEV_STATE_RELEASED;
     }
+
+#if LVGL_PORT_LATENCY_TRACE
+    int64_t read_us = esp_timer_get_time() - read_start_us;
+    if (read_us >= LVGL_PORT_TOUCH_READ_WARN_US) {
+      ESP_LOGW(TAG, "LVGL_TRACE touch read slow: %lld us state=%s",
+               (long long)read_us,
+               touch_last_state == LV_INDEV_STATE_PRESSED ? "pressed"
+                                                          : "released");
+    }
+    if (previous_state != touch_last_state) {
+      ESP_LOGI(TAG, "LVGL_TRACE touch %s t=%lld x=%d y=%d read=%lld us",
+               touch_last_state == LV_INDEV_STATE_PRESSED ? "pressed"
+                                                          : "released",
+               (long long)esp_timer_get_time(), touch_last_point.x,
+               touch_last_point.y, (long long)read_us);
+    }
+#endif
   }
 
   data->point = touch_last_point;
@@ -578,9 +645,31 @@ static void lvgl_port_task(void *arg) {
 
   uint32_t task_delay_ms =
       LVGL_PORT_TASK_MAX_DELAY_MS; // Set initial task delay
+#if LVGL_PORT_LATENCY_TRACE
+  int64_t last_loop_start_us = esp_timer_get_time();
+#endif
   while (1) {
+#if LVGL_PORT_LATENCY_TRACE
+    int64_t loop_start_us = esp_timer_get_time();
+    int64_t loop_gap_us = loop_start_us - last_loop_start_us;
+    if (loop_gap_us >= LVGL_PORT_LOOP_GAP_WARN_US) {
+      ESP_LOGW(TAG, "LVGL_TRACE handler gap: %lld us previous_delay=%lu ms",
+               (long long)loop_gap_us, (unsigned long)task_delay_ms);
+    }
+    last_loop_start_us = loop_start_us;
+#endif
     if (lvgl_port_lock(-1)) {             // Try to lock the LVGL mutex
+#if LVGL_PORT_LATENCY_TRACE
+      int64_t handler_start_us = esp_timer_get_time();
+#endif
       task_delay_ms = lv_timer_handler(); // Handle LVGL timer events
+#if LVGL_PORT_LATENCY_TRACE
+      int64_t handler_us = esp_timer_get_time() - handler_start_us;
+      if (handler_us >= LVGL_PORT_HANDLER_WARN_US) {
+        ESP_LOGW(TAG, "LVGL_TRACE handler slow: %lld us next_delay=%lu ms",
+                 (long long)handler_us, (unsigned long)task_delay_ms);
+      }
+#endif
       lvgl_port_unlock();                 // Unlock the mutex
     }
     // Ensure the delay time is within limits
@@ -677,6 +766,9 @@ bool lvgl_port_notify_rgb_vsync(void) {
     lvgl_port_rgb_last_buf = lvgl_port_rgb_next_buf; // Update the last buffer
   }
 #elif LVGL_PORT_AVOID_TEAR_ENABLE
+  if (lvgl_task_handle == NULL) {
+    return false;
+  }
   // Notify that the current RGB frame buffer has been transmitted
   xTaskNotifyFromISR(lvgl_task_handle, ULONG_MAX, eNoAction,
                      &need_yield); // Notify the LVGL task

@@ -1,6 +1,7 @@
 #include "ui.h"
 #include "dashboard_data_api.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "wifi_handler.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +9,8 @@
 
 extern const lv_font_t notosans_14;
 static const char *TAG = "UI";
+
+#define UI_LATENCY_TRACE (1)
 
 #define C_BLACK 0x000000
 #define C_PANEL 0x111827
@@ -39,6 +42,7 @@ static void ui_build_screen_facility(UI *_UI);
 static void ui_build_screen_device_info(UI *_UI);
 static void ui_setup_finish_if_complete(UI *_UI);
 static void keyboard_event_cb(lv_event_t *e);
+static void ui_style_keyboard(lv_obj_t *keyboard);
 static void ui_hide_keyboard(UI *_UI);
 static void ui_show_keyboard(UI *_UI, lv_obj_t *ta);
 static lv_obj_t *ui_create_panel(lv_obj_t *_parent);
@@ -152,7 +156,19 @@ static void textarea_event_cb(lv_event_t *e) {
     return;
 
   if (code == LV_EVENT_FOCUSED || code == LV_EVENT_PRESSED) {
+#if UI_LATENCY_TRACE
+    ESP_LOGI(TAG, "LVGL_TRACE textarea %s t=%lld",
+             code == LV_EVENT_FOCUSED ? "focused" : "pressed",
+             (long long)esp_timer_get_time());
+#endif
     ui_show_keyboard(ui, ta);
+  } else if (code == LV_EVENT_VALUE_CHANGED) {
+#if UI_LATENCY_TRACE
+    const char *text = lv_textarea_get_text(ta);
+    ESP_LOGI(TAG, "LVGL_TRACE textarea changed t=%lld len=%u",
+             (long long)esp_timer_get_time(),
+             (unsigned int)(text ? strlen(text) : 0));
+#endif
   }
 }
 
@@ -1033,11 +1049,14 @@ void ui_init(UI *_UI) {
   ui_build_content(_UI);
   ui_build_footer(_UI);
   _UI->keyboard = lv_keyboard_create(lv_scr_act());
-  lv_obj_set_size(_UI->keyboard, LV_PCT(100), 220);
+  lv_obj_set_size(_UI->keyboard, 820, 190);
   lv_obj_align(_UI->keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+  ui_style_keyboard(_UI->keyboard);
   lv_obj_add_flag(_UI->keyboard, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_event_cb(_UI->keyboard, keyboard_event_cb, LV_EVENT_READY, _UI);
   lv_obj_add_event_cb(_UI->keyboard, keyboard_event_cb, LV_EVENT_CANCEL, _UI);
+  lv_obj_add_event_cb(_UI->keyboard, keyboard_event_cb,
+                      LV_EVENT_VALUE_CHANGED, _UI);
   ui_show_screen(_UI, UI_SCREEN_HOME);
 }
 
@@ -1662,6 +1681,31 @@ static void ui_show_keyboard(UI *_UI, lv_obj_t *ta) {
   lv_obj_move_foreground(_UI->keyboard);
 }
 
+static void ui_style_keyboard(lv_obj_t *keyboard) {
+  lv_obj_set_style_bg_color(keyboard, lv_color_hex(C_BLACK), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(keyboard, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(keyboard, 0, LV_PART_MAIN);
+  lv_obj_set_style_radius(keyboard, 0, LV_PART_MAIN);
+  lv_obj_set_style_shadow_width(keyboard, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(keyboard, 4, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(keyboard, 3, LV_PART_MAIN);
+  lv_obj_set_style_pad_column(keyboard, 3, LV_PART_MAIN);
+
+  lv_obj_set_style_bg_color(keyboard, lv_color_hex(C_CARD), LV_PART_ITEMS);
+  lv_obj_set_style_bg_opa(keyboard, LV_OPA_COVER, LV_PART_ITEMS);
+  lv_obj_set_style_border_width(keyboard, 0, LV_PART_ITEMS);
+  lv_obj_set_style_radius(keyboard, 2, LV_PART_ITEMS);
+  lv_obj_set_style_shadow_width(keyboard, 0, LV_PART_ITEMS);
+  lv_obj_set_style_outline_width(keyboard, 0, LV_PART_ITEMS);
+  lv_obj_set_style_text_color(keyboard, lv_color_white(), LV_PART_ITEMS);
+  lv_obj_set_style_text_font(keyboard, &notosans_14, LV_PART_ITEMS);
+
+  lv_obj_set_style_bg_color(keyboard, lv_color_hex(C_BLUE),
+                            LV_PART_ITEMS | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(keyboard, LV_OPA_COVER,
+                          LV_PART_ITEMS | LV_STATE_PRESSED);
+}
+
 static lv_obj_t *ui_create_textarea(UI *_UI, lv_obj_t *parent,
                                     const char *placeholder) {
   lv_obj_t *ta = lv_textarea_create(parent);
@@ -1673,6 +1717,7 @@ static lv_obj_t *ui_create_textarea(UI *_UI, lv_obj_t *parent,
 
   lv_obj_add_event_cb(ta, textarea_event_cb, LV_EVENT_FOCUSED, _UI);
   lv_obj_add_event_cb(ta, textarea_event_cb, LV_EVENT_PRESSED, _UI);
+  lv_obj_add_event_cb(ta, textarea_event_cb, LV_EVENT_VALUE_CHANGED, _UI);
 
   return ta;
 }
@@ -3110,6 +3155,7 @@ static void ui_open_wifi_password(UI *_UI, int _idx) {
   lv_obj_set_size(_UI->wifi_pass_ta, LV_PCT(100), 48);
   lv_obj_align(_UI->wifi_pass_ta, LV_ALIGN_TOP_LEFT, 0, 50);
   lv_textarea_set_password_mode(_UI->wifi_pass_ta, true);
+  lv_textarea_set_password_show_time(_UI->wifi_pass_ta, 0);
 
   _UI->wifi_show_password_cb = lv_checkbox_create(_UI->wifi_password_panel);
   lv_checkbox_set_text(_UI->wifi_show_password_cb, "Show password");
@@ -3396,7 +3442,15 @@ static void keyboard_event_cb(lv_event_t *e) {
   if (!_UI)
     return;
 
-  if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
+  if (code == LV_EVENT_VALUE_CHANGED) {
+#if UI_LATENCY_TRACE
+    lv_obj_t *keyboard = lv_event_get_target(e);
+    uint16_t selected = lv_keyboard_get_selected_btn(keyboard);
+    const char *text = lv_keyboard_get_btn_text(keyboard, selected);
+    ESP_LOGI(TAG, "LVGL_TRACE keyboard value_changed t=%lld key=%s",
+             (long long)esp_timer_get_time(), text ? text : "?");
+#endif
+  } else if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
     ui_hide_keyboard(_UI);
   }
 }

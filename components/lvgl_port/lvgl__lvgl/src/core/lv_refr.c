@@ -18,6 +18,8 @@
 #include "../draw/lv_draw.h"
 #include "../font/lv_font_fmt_txt.h"
 #include "../extra/others/snapshot/lv_snapshot.h"
+#include "esp_log.h"
+#include "esp_timer.h"
 
 #if LV_USE_PERF_MONITOR || LV_USE_MEM_MONITOR
     #include "../widgets/lv_label.h"
@@ -26,6 +28,12 @@
 /*********************
  *      DEFINES
  *********************/
+
+#define LVGL_TRACE_INVALIDATION 1
+#define LVGL_TRACE_INVALIDATION_TAG "lv_refr"
+#define LVGL_TRACE_INVALIDATION_BOOT_SKIP_US 5000000
+#define LVGL_TRACE_REFRESH_PHASES 1
+#define LVGL_TRACE_REFRESH_PHASE_WARN_US 20000
 
 /**********************
  *      TYPEDEFS
@@ -231,6 +239,18 @@ void _lv_inv_area(lv_disp_t * disp, const lv_area_t * area_p)
     suc = _lv_area_intersect(&com_area, area_p, &scr_area);
     if(suc == false)  return; /*Out of the screen*/
 
+#if LVGL_TRACE_INVALIDATION
+    bool full_screen_inv = com_area.x1 == scr_area.x1 && com_area.y1 == scr_area.y1 &&
+                           com_area.x2 == scr_area.x2 && com_area.y2 == scr_area.y2;
+    if(full_screen_inv && esp_timer_get_time() > LVGL_TRACE_INVALIDATION_BOOT_SKIP_US) {
+        ESP_LOGW(LVGL_TRACE_INVALIDATION_TAG,
+                 "LVGL_TRACE invalidate full screen req=%d,%d-%d,%d inv_p=%u full_refresh=%d direct=%d",
+                 area_p->x1, area_p->y1, area_p->x2, area_p->y2, disp->inv_p,
+                 disp->driver ? disp->driver->full_refresh : -1,
+                 disp->driver ? disp->driver->direct_mode : -1);
+    }
+#endif
+
     /*If there were at least 1 invalid area in full refresh mode, redraw the whole screen*/
     if(disp->driver->full_refresh) {
         disp->inv_areas[0] = scr_area;
@@ -252,6 +272,14 @@ void _lv_inv_area(lv_disp_t * disp, const lv_area_t * area_p)
         lv_area_copy(&disp->inv_areas[disp->inv_p], &com_area);
     }
     else {   /*If no place for the area add the screen*/
+#if LVGL_TRACE_INVALIDATION
+        if(esp_timer_get_time() > LVGL_TRACE_INVALIDATION_BOOT_SKIP_US) {
+            ESP_LOGW(LVGL_TRACE_INVALIDATION_TAG,
+                     "LVGL_TRACE invalidate overflow: inv_p=%u max=%u fallback=%d,%d-%d,%d",
+                     disp->inv_p, LV_INV_BUF_SIZE, scr_area.x1, scr_area.y1,
+                     scr_area.x2, scr_area.y2);
+        }
+#endif
         disp->inv_p = 0;
         lv_area_copy(&disp->inv_areas[disp->inv_p], &scr_area);
     }
@@ -289,6 +317,10 @@ void _lv_disp_refr_timer(lv_timer_t * tmr)
 
     uint32_t start = lv_tick_get();
     volatile uint32_t elaps = 0;
+#if LVGL_TRACE_REFRESH_PHASES
+    int64_t phase_start_us = esp_timer_get_time();
+    int64_t phase_us = 0;
+#endif
 
     if(tmr) {
         disp_refr = tmr->user_data;
@@ -310,6 +342,14 @@ void _lv_disp_refr_timer(lv_timer_t * tmr)
 
     lv_obj_update_layout(disp_refr->top_layer);
     lv_obj_update_layout(disp_refr->sys_layer);
+#if LVGL_TRACE_REFRESH_PHASES
+    phase_us = esp_timer_get_time() - phase_start_us;
+    if(phase_us >= LVGL_TRACE_REFRESH_PHASE_WARN_US) {
+        ESP_LOGW(LVGL_TRACE_INVALIDATION_TAG, "LVGL_TRACE refresh layout slow: %lld us inv_p=%u",
+                 (long long)phase_us, disp_refr ? disp_refr->inv_p : 0);
+    }
+    phase_start_us = esp_timer_get_time();
+#endif
 
     /*Do nothing if there is no active screen*/
     if(disp_refr->act_scr == NULL) {
@@ -320,8 +360,33 @@ void _lv_disp_refr_timer(lv_timer_t * tmr)
     }
 
     lv_refr_join_area();
+#if LVGL_TRACE_REFRESH_PHASES
+    phase_us = esp_timer_get_time() - phase_start_us;
+    if(phase_us >= LVGL_TRACE_REFRESH_PHASE_WARN_US) {
+        ESP_LOGW(LVGL_TRACE_INVALIDATION_TAG, "LVGL_TRACE refresh join slow: %lld us inv_p=%u",
+                 (long long)phase_us, disp_refr->inv_p);
+    }
+    phase_start_us = esp_timer_get_time();
+#endif
     refr_sync_areas();
+#if LVGL_TRACE_REFRESH_PHASES
+    phase_us = esp_timer_get_time() - phase_start_us;
+    if(phase_us >= LVGL_TRACE_REFRESH_PHASE_WARN_US) {
+        ESP_LOGW(LVGL_TRACE_INVALIDATION_TAG, "LVGL_TRACE refresh sync slow: %lld us inv_p=%u",
+                 (long long)phase_us, disp_refr->inv_p);
+    }
+    phase_start_us = esp_timer_get_time();
+#endif
     refr_invalid_areas();
+#if LVGL_TRACE_REFRESH_PHASES
+    phase_us = esp_timer_get_time() - phase_start_us;
+    if(phase_us >= LVGL_TRACE_REFRESH_PHASE_WARN_US) {
+        ESP_LOGW(LVGL_TRACE_INVALIDATION_TAG,
+                 "LVGL_TRACE refresh draw slow: %lld us inv_p=%u px=%u",
+                 (long long)phase_us, disp_refr->inv_p, px_num);
+    }
+    phase_start_us = esp_timer_get_time();
+#endif
 
     /*If refresh happened ...*/
     if(disp_refr->inv_p != 0) {
@@ -357,6 +422,13 @@ void _lv_disp_refr_timer(lv_timer_t * tmr)
 
 #if LV_DRAW_COMPLEX
     _lv_draw_mask_cleanup();
+#endif
+#if LVGL_TRACE_REFRESH_PHASES
+    phase_us = esp_timer_get_time() - phase_start_us;
+    if(phase_us >= LVGL_TRACE_REFRESH_PHASE_WARN_US) {
+        ESP_LOGW(LVGL_TRACE_INVALIDATION_TAG, "LVGL_TRACE refresh cleanup slow: %lld us",
+                 (long long)phase_us);
+    }
 #endif
 
 #if LV_USE_PERF_MONITOR && LV_USE_LABEL
