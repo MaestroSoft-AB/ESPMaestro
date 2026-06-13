@@ -146,6 +146,12 @@ extern "C" void app_main(void) {
     return;
   }
 
+  if (!sensor.init(display_context.i2c.bus)) {
+    ESP_LOGW(TAG, "BME280 not ready during boot, will retry in background");
+  }
+
+  sensor.start(display_context.i2c.bus, display_context.i2c_mutex, 2000);
+
   if (display_handler_init(&display_context) != 0) {
     ESP_LOGE(TAG, "Failed to init display_handler");
   } else {
@@ -169,13 +175,15 @@ extern "C" void app_main(void) {
       ESP_LOGE(TAG, "Failed to create live_power_task");
     }
   }
-  sensor.start(display_context.i2c.bus, display_context.i2c_mutex, 2000);
+
+  static DashboardData dashboard_data;
 
   if (wifi_handler_init(on_wifi_scan_done, on_wifi_status) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to init wifi manager");
     return;
   }
 
+  static UiStatus uistatus(&sensor);
   cli_init();
 
   bool missing_wifi = !wifi_handler_has_saved_config();
@@ -187,7 +195,4 @@ extern "C" void app_main(void) {
   } else if (missing_facility) {
     display_handler_set_footer_text("Warning: Facility config missing");
   }
-
-  static DashboardData dashboard_data;
-  static UiStatus uistatus(&sensor);
 }

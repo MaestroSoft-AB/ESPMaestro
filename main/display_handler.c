@@ -639,9 +639,6 @@ void display_handler_work(void *_null_for_now) {
       }
 
       lvgl_port_unlock();
-
-    } else {
-      ESP_LOGW(TAG, "display_work LVGL lock timeout");
     }
 
     vTaskDelayUntil(&x_last_wake, x_freq);
