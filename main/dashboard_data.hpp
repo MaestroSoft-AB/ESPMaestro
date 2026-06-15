@@ -123,13 +123,7 @@ public:
                                const uint16_t weather_code_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
                                const uint16_t shortwave_wm2_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
                                const float wind_kmh_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
-                               const char time_24h[DASHBOARD_WEATHER_HOURLY_POINTS][6],
-                               const float temp_c_daily[DASHBOARD_WEATHER_DAILY_POINTS],
-                               const uint8_t rain_percent_daily[DASHBOARD_WEATHER_DAILY_POINTS],
-                               const uint16_t weather_code_daily[DASHBOARD_WEATHER_DAILY_POINTS],
-                               const float wind_kmh_daily[DASHBOARD_WEATHER_DAILY_POINTS],
-                               const char time_daily[DASHBOARD_WEATHER_DAILY_POINTS][6],
-                               uint8_t daily_count);
+                               const char time_24h[DASHBOARD_WEATHER_HOURLY_POINTS][6]);
 
   /**
    * @brief Update cached electricity pricing data.

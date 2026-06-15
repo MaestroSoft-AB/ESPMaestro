@@ -4,8 +4,7 @@
 #include <stdint.h>
 
 #define DASHBOARD_ENERGY_MAX_POINTS 30
-#define DASHBOARD_WEATHER_HOURLY_POINTS 24
-#define DASHBOARD_WEATHER_DAILY_POINTS 30
+#define DASHBOARD_WEATHER_HOURLY_POINTS 25
 #define DASHBOARD_ERROR_TEXT_MAX 96
 
 typedef struct {
@@ -19,12 +18,6 @@ typedef struct {
   uint16_t shortwave_wm2_24h[DASHBOARD_WEATHER_HOURLY_POINTS];
   float wind_kmh_24h[DASHBOARD_WEATHER_HOURLY_POINTS];
   char time_24h[DASHBOARD_WEATHER_HOURLY_POINTS][6];
-  float temp_c_daily[DASHBOARD_WEATHER_DAILY_POINTS];
-  uint8_t rain_percent_daily[DASHBOARD_WEATHER_DAILY_POINTS];
-  uint16_t weather_code_daily[DASHBOARD_WEATHER_DAILY_POINTS];
-  float wind_kmh_daily[DASHBOARD_WEATHER_DAILY_POINTS];
-  char time_daily[DASHBOARD_WEATHER_DAILY_POINTS][6];
-  uint8_t daily_count;
   char last_error[DASHBOARD_ERROR_TEXT_MAX];
   uint32_t updated_epoch;
 } WeatherData;

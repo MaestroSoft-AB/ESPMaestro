@@ -87,7 +87,6 @@ static void ui_update_forecast_unavailable(UI *ui, const WeatherData *weather);
 static int ui_forecast_table_page_count(const UI *ui);
 static int ui_forecast_point_count(const UI *ui);
 static int ui_forecast_tick_count(const UI *ui);
-static int ui_forecast_tick_to_point_index(const UI *ui, int tick);
 static void ui_update_wifi_rows(UI *_UI);
 static void ui_open_wifi_password(UI *_UI, int _idx);
 static void ui_close_wifi_password(UI *_UI);
@@ -97,7 +96,6 @@ static void nav_event_cb(lv_event_t *_event);
 static void back_event_cb(lv_event_t *_event);
 static void settings_card_event_cb(lv_event_t *_event);
 static void view_toggle_event_cb(lv_event_t *_event);
-static void forecast_range_event_cb(lv_event_t *_event);
 static void energy_range_event_cb(lv_event_t *_event);
 static void wifi_scan_btn_event_cb(lv_event_t *_event);
 static void wifi_network_row_event_cb(lv_event_t *_event);
@@ -172,8 +170,7 @@ static void textarea_event_cb(lv_event_t *e) {
 /****************************CHART********************/
 
 #define UI_ENERGY_TIME_TICKS_MAX 6
-#define UI_FORECAST_CHART_POINTS 24
-#define UI_FORECAST_MULTI_DAY_MAX_TICKS 6
+#define UI_FORECAST_CHART_POINTS DASHBOARD_WEATHER_HOURLY_POINTS
 #define UI_FORECAST_TIME_TICKS 5
 #define UI_FORECAST_TABLE_ROWS_PER_PAGE 4
 
@@ -329,26 +326,24 @@ static void ui_forecast_time_axis_label(int tick, char *buf, uint32_t buf_size,
   if (buf == NULL || buf_size == 0)
     return;
 
-  if (!ui || ui->forecast_range == UI_RANGE_24H) {
-    if (tick < 0)
-      tick = 0;
-    if (tick >= UI_FORECAST_TIME_TICKS)
-      tick = UI_FORECAST_TIME_TICKS - 1;
+  if (tick < 0)
+    tick = 0;
+  if (tick >= UI_FORECAST_TIME_TICKS)
+    tick = UI_FORECAST_TIME_TICKS - 1;
 
-    if (tick == UI_FORECAST_TIME_TICKS - 1) {
-      snprintf(buf, buf_size, "24");
-    } else {
-      snprintf(buf, buf_size, "%02d", tick * 6);
-    }
-  } else {
-    int index = ui_forecast_tick_to_point_index(ui, tick);
-    if (index >= 0 && index < ui->cached_weather.daily_count &&
-        ui->cached_weather.time_daily[index][0] != '\0') {
-      snprintf(buf, buf_size, "%s", ui->cached_weather.time_daily[index]);
-    } else {
-      snprintf(buf, buf_size, "D%02d", index + 1);
-    }
+  int index = 0;
+  if (UI_FORECAST_TIME_TICKS > 1) {
+    index = (tick * (UI_FORECAST_CHART_POINTS - 1)) /
+            (UI_FORECAST_TIME_TICKS - 1);
   }
+
+  if (ui && index >= 0 && index < UI_FORECAST_CHART_POINTS &&
+      ui->cached_weather.time_24h[index][0] != '\0') {
+    snprintf(buf, buf_size, "%s", ui->cached_weather.time_24h[index]);
+    return;
+  }
+
+  snprintf(buf, buf_size, "--:--");
 }
 
 static void ui_forecast_temp_axis_label(int scaled_temp, char *buf,
@@ -431,43 +426,28 @@ static void ui_set_range_btn_state(lv_obj_t *btn, bool active) {
                                 0);
 }
 
-static void ui_update_forecast_range_buttons(UI *ui) {
-  if (!ui)
-    return;
-
-  ui_set_range_btn_state(ui->forecast_range_24h_btn,
-                         ui->forecast_range == UI_RANGE_24H);
-  ui_set_range_btn_state(ui->forecast_range_7d_btn,
-                         ui->forecast_range == UI_RANGE_7D);
-  ui_set_range_btn_state(ui->forecast_range_30d_btn,
-                         ui->forecast_range == UI_RANGE_30D);
-}
-
 static void ui_apply_forecast_view(UI *ui) {
   if (!ui)
     return;
 
-  bool multi_day = ui->forecast_range != UI_RANGE_24H;
-  UI_ViewMode effective_view =
-      multi_day ? UI_VIEW_TABLE : ui->forecast_view_mode;
-  bool show_table = effective_view == UI_VIEW_TABLE;
+  bool show_table = ui->forecast_view_mode == UI_VIEW_TABLE;
 
   if (ui->forecast_chart) {
-    if (show_table || multi_day)
+    if (show_table)
       lv_obj_add_flag(ui->forecast_chart, LV_OBJ_FLAG_HIDDEN);
     else
       lv_obj_clear_flag(ui->forecast_chart, LV_OBJ_FLAG_HIDDEN);
   }
 
   if (ui->forecast_x_axis_label) {
-    if (show_table || multi_day)
+    if (show_table)
       lv_obj_add_flag(ui->forecast_x_axis_label, LV_OBJ_FLAG_HIDDEN);
     else
       lv_obj_clear_flag(ui->forecast_x_axis_label, LV_OBJ_FLAG_HIDDEN);
   }
 
   if (ui->forecast_y_axis_label) {
-    if (show_table || multi_day)
+    if (show_table)
       lv_obj_add_flag(ui->forecast_y_axis_label, LV_OBJ_FLAG_HIDDEN);
     else
       lv_obj_clear_flag(ui->forecast_y_axis_label, LV_OBJ_FLAG_HIDDEN);
@@ -481,14 +461,14 @@ static void ui_apply_forecast_view(UI *ui) {
   }
 
   if (ui->forecast_table_prev_btn) {
-    if (show_table && !multi_day && ui->forecast_table_page > 0)
+    if (show_table && ui->forecast_table_page > 0)
       lv_obj_clear_flag(ui->forecast_table_prev_btn, LV_OBJ_FLAG_HIDDEN);
     else
       lv_obj_add_flag(ui->forecast_table_prev_btn, LV_OBJ_FLAG_HIDDEN);
   }
 
   if (ui->forecast_table_next_btn) {
-    if (show_table && !multi_day &&
+    if (show_table &&
         ui->forecast_table_page < ui_forecast_table_page_count(ui) - 1)
       lv_obj_clear_flag(ui->forecast_table_next_btn, LV_OBJ_FLAG_HIDDEN);
     else
@@ -496,7 +476,7 @@ static void ui_apply_forecast_view(UI *ui) {
   }
 
   if (ui->forecast_table_page_label) {
-    if (show_table && !multi_day)
+    if (show_table)
       lv_obj_clear_flag(ui->forecast_table_page_label, LV_OBJ_FLAG_HIDDEN);
     else
       lv_obj_add_flag(ui->forecast_table_page_label, LV_OBJ_FLAG_HIDDEN);
@@ -626,7 +606,11 @@ static void ui_show_forecast_detail(UI *ui, uint32_t hour) {
   char code_value[32];
   char rain_detail[40];
 
-  ui_energy_hour_range_label(hour, hour_label, sizeof(hour_label));
+  if (weather->time_24h[hour][0] != '\0') {
+    snprintf(hour_label, sizeof(hour_label), "%s", weather->time_24h[hour]);
+  } else {
+    ui_energy_hour_range_label(hour, hour_label, sizeof(hour_label));
+  }
   snprintf(primary, sizeof(primary), "%.1fC", weather->temp_c_24h[hour]);
   snprintf(temp_value, sizeof(temp_value), "%.1fC", weather->temp_c_24h[hour]);
   snprintf(rain_value, sizeof(rain_value), "%u%%",
@@ -1037,7 +1021,6 @@ void ui_init(UI *_UI) {
   _UI->wifi_connecting_index = -1;
   _UI->forecast_view_mode = UI_VIEW_GRAPH;
   _UI->elpriser_view_mode = UI_VIEW_GRAPH;
-  _UI->forecast_range = UI_RANGE_24H;
   _UI->energy_range = UI_RANGE_24H;
   snprintf(_UI->wifi_status, sizeof(_UI->wifi_status), "WiFi: Not connected");
   ESP_LOGI(TAG, "Initializing Figma UI...");
@@ -1262,9 +1245,6 @@ static void ui_destroy_active_screen(UI *_UI) {
   _UI->forecast_table_prev_btn = NULL;
   _UI->forecast_table_next_btn = NULL;
   _UI->forecast_table_page_label = NULL;
-  _UI->forecast_range_24h_btn = NULL;
-  _UI->forecast_range_7d_btn = NULL;
-  _UI->forecast_range_30d_btn = NULL;
   _UI->forecast_x_axis_label = NULL;
   _UI->forecast_y_axis_label = NULL;
   _UI->forecast_temp_series = NULL;
@@ -1586,47 +1566,13 @@ static const char *ui_weather_code_summary(uint16_t code) {
 }
 
 static int ui_forecast_point_count(const UI *ui) {
-  if (!ui)
-    return UI_FORECAST_CHART_POINTS;
-
-  if (ui->forecast_range == UI_RANGE_24H)
-    return UI_FORECAST_CHART_POINTS;
-
-  int desired =
-      ui->forecast_range == UI_RANGE_7D ? 7 : DASHBOARD_WEATHER_DAILY_POINTS;
-  int available = ui->cached_weather.daily_count;
-  if (available <= 0)
-    return 0;
-  return available < desired ? available : desired;
+  (void)ui;
+  return UI_FORECAST_CHART_POINTS;
 }
 
 static int ui_forecast_tick_count(const UI *ui) {
-  int point_count = ui_forecast_point_count(ui);
-  if (point_count <= 0)
-    return UI_FORECAST_TIME_TICKS;
-  return point_count <= UI_FORECAST_MULTI_DAY_MAX_TICKS
-             ? point_count
-             : UI_FORECAST_MULTI_DAY_MAX_TICKS;
-}
-
-static int ui_forecast_tick_to_point_index(const UI *ui, int tick) {
-  int point_count = ui_forecast_point_count(ui);
-  int tick_count = ui_forecast_tick_count(ui);
-  if (point_count <= 0 || tick_count <= 0)
-    return 0;
-  if (tick < 0)
-    tick = 0;
-  if (tick >= tick_count)
-    tick = tick_count - 1;
-  if (tick_count == 1)
-    return 0;
-
-  int index = (tick * (point_count - 1)) / (tick_count - 1);
-  if (index < 0)
-    index = 0;
-  if (index >= point_count)
-    index = point_count - 1;
-  return index;
+  (void)ui;
+  return UI_FORECAST_TIME_TICKS;
 }
 
 static int ui_trend_from_ratio(float current, float baseline, float tolerance) {
@@ -1910,13 +1856,11 @@ static void ui_update_forecast_table(UI *ui, const WeatherData *weather) {
   if (!ui || !weather || !weather->valid || !ui->forecast_table)
     return;
 
-  bool multi_day = ui->forecast_range != UI_RANGE_24H;
   int point_count = ui_forecast_point_count(ui);
   if (point_count <= 0) {
     lv_table_set_col_cnt(ui->forecast_table, 1);
     lv_table_set_row_cnt(ui->forecast_table, 2);
-    lv_table_set_cell_value(ui->forecast_table, 0, 0,
-                            multi_day ? "Days" : "Hours");
+    lv_table_set_cell_value(ui->forecast_table, 0, 0, "Hours");
     lv_table_set_cell_value(ui->forecast_table, 1, 0,
                             "Forecast data unavailable");
     return;
@@ -1933,11 +1877,10 @@ static void ui_update_forecast_table(UI *ui, const WeatherData *weather) {
 
   lv_table_set_col_cnt(ui->forecast_table, 4);
   lv_table_set_row_cnt(ui->forecast_table, UI_FORECAST_TABLE_ROWS_PER_PAGE + 1);
-  lv_table_set_cell_value(ui->forecast_table, 0, 0, multi_day ? "Day" : "Time");
+  lv_table_set_cell_value(ui->forecast_table, 0, 0, "Time");
   lv_table_set_cell_value(ui->forecast_table, 0, 1, "Temp");
   lv_table_set_cell_value(ui->forecast_table, 0, 2, "Rain");
-  lv_table_set_cell_value(ui->forecast_table, 0, 3,
-                          multi_day ? "Cond" : "Wind");
+  lv_table_set_cell_value(ui->forecast_table, 0, 3, "Wind");
 
   int start_index = ui->forecast_table_page * UI_FORECAST_TABLE_ROWS_PER_PAGE;
   for (int row = 0; row < UI_FORECAST_TABLE_ROWS_PER_PAGE; row++) {
@@ -1950,20 +1893,11 @@ static void ui_update_forecast_table(UI *ui, const WeatherData *weather) {
       continue;
     }
 
-    if (multi_day) {
-      snprintf(temp, sizeof(temp), "%.1fC", weather->temp_c_daily[index]);
-      snprintf(rain, sizeof(rain), "%u%%", weather->rain_percent_daily[index]);
-      snprintf(extra, sizeof(extra), "%s",
-               ui_weather_code_summary(weather->weather_code_daily[index]));
-      lv_table_set_cell_value(ui->forecast_table, row + 1, 0,
-                              weather->time_daily[index]);
-    } else {
-      snprintf(temp, sizeof(temp), "%.1fC", weather->temp_c_24h[index]);
-      snprintf(rain, sizeof(rain), "%u%%", weather->rain_percent_24h[index]);
-      snprintf(extra, sizeof(extra), "%.0f", weather->wind_kmh_24h[index]);
-      lv_table_set_cell_value(ui->forecast_table, row + 1, 0,
-                              weather->time_24h[index]);
-    }
+    snprintf(temp, sizeof(temp), "%.1fC", weather->temp_c_24h[index]);
+    snprintf(rain, sizeof(rain), "%u%%", weather->rain_percent_24h[index]);
+    snprintf(extra, sizeof(extra), "%.0f", weather->wind_kmh_24h[index]);
+    lv_table_set_cell_value(ui->forecast_table, row + 1, 0,
+                            weather->time_24h[index]);
     lv_table_set_cell_value(ui->forecast_table, row + 1, 1, temp);
     lv_table_set_cell_value(ui->forecast_table, row + 1, 2, rain);
     lv_table_set_cell_value(ui->forecast_table, row + 1, 3, extra);
@@ -2213,11 +2147,7 @@ static void ui_update_forecast_unavailable(UI *ui, const WeatherData *weather) {
   if (ui->forecast_table) {
     lv_table_set_col_cnt(ui->forecast_table, 1);
     lv_table_set_row_cnt(ui->forecast_table, 2);
-    lv_table_set_cell_value(
-        ui->forecast_table, 0, 0,
-        ui->forecast_range == UI_RANGE_24H
-            ? "24h"
-            : (ui->forecast_range == UI_RANGE_7D ? "7 days" : "30 days"));
+    lv_table_set_cell_value(ui->forecast_table, 0, 0, "24h");
     lv_table_set_cell_value(ui->forecast_table, 1, 0, error_text);
   }
 
@@ -2243,11 +2173,8 @@ static void ui_update_forecast_data(UI *ui, const WeatherData *weather) {
     return;
   }
 
-  ui_update_forecast_range_buttons(ui);
   if (ui->forecast_x_axis_label) {
-    ui_set_label_text_if_changed(ui->forecast_x_axis_label,
-                                 ui->forecast_range == UI_RANGE_24H ? "Time"
-                                                                    : "Day");
+    ui_set_label_text_if_changed(ui->forecast_x_axis_label, "Time");
   }
   int point_count = ui_forecast_point_count(ui);
 
@@ -2264,20 +2191,16 @@ static void ui_update_forecast_data(UI *ui, const WeatherData *weather) {
     if (ui->forecast_table) {
       lv_table_set_col_cnt(ui->forecast_table, 1);
       lv_table_set_row_cnt(ui->forecast_table, 2);
-      lv_table_set_cell_value(ui->forecast_table, 0, 0,
-                              ui->forecast_range == UI_RANGE_7D ? "7 days"
-                                                                : "30 days");
+      lv_table_set_cell_value(ui->forecast_table, 0, 0, "24h");
       lv_table_set_cell_value(ui->forecast_table, 1, 0,
-                              "Multi-day weather data unavailable");
+                              "Forecast data unavailable");
     }
     ui_apply_forecast_view(ui);
     return;
   }
 
   if (ui->forecast_chart && ui->forecast_temp_series && point_count > 0) {
-    const float *values = ui->forecast_range == UI_RANGE_24H
-                              ? weather->temp_c_24h
-                              : weather->temp_c_daily;
+    const float *values = weather->temp_c_24h;
     int min_v = ui_forecast_temp_min_scaled(values, point_count) - 20;
     int max_v = ui_forecast_temp_max_scaled(values, point_count) + 20;
 
@@ -2319,18 +2242,8 @@ static void ui_build_screen_forecast(UI *_UI) {
       ui_create_label(panel, "Today's Forecast", lv_color_white());
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
   lv_obj_t *subtitle =
-      ui_create_label(panel, "00:00-24:00, temperature", lv_color_hex(C_MUTED));
+      ui_create_label(panel, "24h temperature forecast", lv_color_hex(C_MUTED));
   lv_obj_align(subtitle, LV_ALIGN_TOP_LEFT, 0, 26);
-  _UI->forecast_range_24h_btn = ui_create_range_button(
-      panel, "24h", UI_RANGE_24H, _UI, forecast_range_event_cb);
-  lv_obj_align(_UI->forecast_range_24h_btn, LV_ALIGN_TOP_RIGHT, -140, 0);
-  _UI->forecast_range_7d_btn = ui_create_range_button(
-      panel, "7d", UI_RANGE_7D, _UI, forecast_range_event_cb);
-  lv_obj_align(_UI->forecast_range_7d_btn, LV_ALIGN_TOP_RIGHT, -70, 0);
-  _UI->forecast_range_30d_btn = ui_create_range_button(
-      panel, "30d", UI_RANGE_30D, _UI, forecast_range_event_cb);
-  lv_obj_align(_UI->forecast_range_30d_btn, LV_ALIGN_TOP_RIGHT, 0, 0);
-  ui_update_forecast_range_buttons(_UI);
   _UI->forecast_table_btn =
       ui_create_button(panel, "Table", lv_color_hex(C_CARD));
   lv_obj_set_size(_UI->forecast_table_btn, 86, 38);
@@ -2389,20 +2302,18 @@ static void ui_build_screen_forecast(UI *_UI) {
   lv_obj_align(_UI->forecast_table, LV_ALIGN_TOP_LEFT, 0, 8);
   lv_obj_clear_flag(_UI->forecast_table, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(_UI->forecast_table, LV_SCROLLBAR_MODE_OFF);
-  lv_table_set_col_cnt(_UI->forecast_table, 5);
+  lv_table_set_col_cnt(_UI->forecast_table, 4);
   lv_table_set_row_cnt(_UI->forecast_table,
                        UI_FORECAST_TABLE_ROWS_PER_PAGE + 1);
   lv_table_set_cell_value(_UI->forecast_table, 0, 0, "Time");
   lv_table_set_cell_value(_UI->forecast_table, 0, 1, "Temp");
   lv_table_set_cell_value(_UI->forecast_table, 0, 2, "Rain");
   lv_table_set_cell_value(_UI->forecast_table, 0, 3, "Wind");
-  lv_table_set_cell_value(_UI->forecast_table, 0, 4, "Solar");
   for (int i = 1; i <= UI_FORECAST_TABLE_ROWS_PER_PAGE; i++) {
     lv_table_set_cell_value(_UI->forecast_table, i, 0, "--:--");
     lv_table_set_cell_value(_UI->forecast_table, i, 1, "--");
     lv_table_set_cell_value(_UI->forecast_table, i, 2, "--");
     lv_table_set_cell_value(_UI->forecast_table, i, 3, "--");
-    lv_table_set_cell_value(_UI->forecast_table, i, 4, "--");
   }
   lv_obj_add_flag(_UI->forecast_table, LV_OBJ_FLAG_HIDDEN);
 
@@ -2943,35 +2854,11 @@ static void forecast_chart_event_cb(lv_event_t *_event) {
   if (!ui || !chart)
     return;
 
-  if (ui->forecast_range != UI_RANGE_24H)
-    return;
-
   uint32_t point = lv_chart_get_pressed_point(chart);
   if (point == LV_CHART_POINT_NONE || point >= UI_FORECAST_CHART_POINTS)
     return;
 
   ui_show_forecast_detail(ui, point);
-}
-
-static void forecast_range_event_cb(lv_event_t *_event) {
-  UI *ui = lv_event_get_user_data(_event);
-  lv_obj_t *btn = lv_event_get_target(_event);
-  if (!ui || !btn)
-    return;
-
-  ui->forecast_range = (UI_Range)(uintptr_t)lv_obj_get_user_data(btn);
-  ui->forecast_table_page = 0;
-  ui_update_forecast_range_buttons(ui);
-  ui_update_forecast_data(ui, &ui->cached_weather);
-  if (ui->forecast_range == UI_RANGE_24H && ui->forecast_table &&
-      !lv_obj_has_flag(ui->forecast_table, LV_OBJ_FLAG_HIDDEN)) {
-    if (ui->forecast_table_prev_btn)
-      lv_obj_clear_flag(ui->forecast_table_prev_btn, LV_OBJ_FLAG_HIDDEN);
-    if (ui->forecast_table_next_btn)
-      lv_obj_clear_flag(ui->forecast_table_next_btn, LV_OBJ_FLAG_HIDDEN);
-    if (ui->forecast_table_page_label)
-      lv_obj_clear_flag(ui->forecast_table_page_label, LV_OBJ_FLAG_HIDDEN);
-  }
 }
 
 static void energy_range_event_cb(lv_event_t *_event) {

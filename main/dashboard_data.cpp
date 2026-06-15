@@ -86,12 +86,6 @@ typedef struct {
   uint16_t shortwave_wm2_24h[DASHBOARD_WEATHER_HOURLY_POINTS];
   float wind_kmh_24h[DASHBOARD_WEATHER_HOURLY_POINTS];
   char weather_time_24h[DASHBOARD_WEATHER_HOURLY_POINTS][6];
-  float temp_c_daily[DASHBOARD_WEATHER_DAILY_POINTS];
-  uint8_t rain_percent_daily[DASHBOARD_WEATHER_DAILY_POINTS];
-  uint16_t weather_code_daily[DASHBOARD_WEATHER_DAILY_POINTS];
-  float wind_kmh_daily[DASHBOARD_WEATHER_DAILY_POINTS];
-  char weather_time_daily[DASHBOARD_WEATHER_DAILY_POINTS][6];
-  uint8_t daily_count;
 } DbdFetchResult;
 
 /*------------------------------------*/
@@ -783,12 +777,6 @@ static bool dbd_parse_optimaestro_weather_txt(const char *text,
   memset(result->shortwave_wm2_24h, 0, sizeof(result->shortwave_wm2_24h));
   memset(result->wind_kmh_24h, 0, sizeof(result->wind_kmh_24h));
   memset(result->weather_time_24h, 0, sizeof(result->weather_time_24h));
-  memset(result->temp_c_daily, 0, sizeof(result->temp_c_daily));
-  memset(result->rain_percent_daily, 0, sizeof(result->rain_percent_daily));
-  memset(result->weather_code_daily, 0, sizeof(result->weather_code_daily));
-  memset(result->wind_kmh_daily, 0, sizeof(result->wind_kmh_daily));
-  memset(result->weather_time_daily, 0, sizeof(result->weather_time_daily));
-  result->daily_count = 0;
 
   time_t now = time(NULL);
 
@@ -799,17 +787,9 @@ static bool dbd_parse_optimaestro_weather_txt(const char *text,
   hour_tm.tm_min = 0;
   hour_tm.tm_sec = 0;
   time_t hour_start = mktime(&hour_tm);
-
-  struct tm day_tm = now_tm;
-  day_tm.tm_hour = 0;
-  day_tm.tm_min = 0;
-  day_tm.tm_sec = 0;
-  time_t day_start = mktime(&day_tm);
+  time_t future_hour_start = hour_start + 3600;
 
   WeatherBucketAccum hourly[DASHBOARD_WEATHER_HOURLY_POINTS] = {};
-  WeatherBucketAccum daily[DASHBOARD_WEATHER_DAILY_POINTS] = {};
-  float daily_temp_max[DASHBOARD_WEATHER_DAILY_POINTS] = {};
-  bool daily_has_data[DASHBOARD_WEATHER_DAILY_POINTS] = {};
 
   bool current_found = false;
   time_t current_ts = 0;
@@ -854,9 +834,10 @@ static bool dbd_parse_optimaestro_weather_txt(const char *text,
         }
       }
 
-      if (ts >= hour_start &&
-          ts < hour_start + (DASHBOARD_WEATHER_HOURLY_POINTS * 3600)) {
-        int hour_index = (int)((ts - hour_start) / 3600);
+      if (ts >= future_hour_start &&
+          ts < future_hour_start +
+                   ((DASHBOARD_WEATHER_HOURLY_POINTS - 1) * 3600)) {
+        int hour_index = (int)((ts - future_hour_start) / 3600) + 1;
         if (hour_index >= 0 && hour_index < DASHBOARD_WEATHER_HOURLY_POINTS) {
           hourly[hour_index].temp_sum += temp;
           hourly[hour_index].precip_sum += precip;
@@ -868,25 +849,6 @@ static bool dbd_parse_optimaestro_weather_txt(const char *text,
         }
       }
 
-      if (ts >= day_start &&
-          ts < day_start + ((time_t)DASHBOARD_WEATHER_DAILY_POINTS * 86400)) {
-        int day_index = (int)((ts - day_start) / 86400);
-        if (day_index >= 0 && day_index < DASHBOARD_WEATHER_DAILY_POINTS) {
-          daily[day_index].temp_sum += temp;
-          daily[day_index].precip_sum += precip;
-          daily[day_index].wind_sum += wind;
-          if (wind > daily[day_index].wind_max)
-            daily[day_index].wind_max = wind;
-          daily[day_index].solar_sum += solar;
-          daily[day_index].count++;
-
-          if (!daily_has_data[day_index] || temp > daily_temp_max[day_index]) {
-            daily_temp_max[day_index] = temp;
-          }
-
-          daily_has_data[day_index] = true;
-        }
-      }
     }
 
     line = strtok_r(NULL, "\n", &saveptr);
@@ -898,6 +860,7 @@ static bool dbd_parse_optimaestro_weather_txt(const char *text,
     return false;
 
   int hourly_valid = 0;
+  int first_valid_hour = -1;
   float last_temp = current_found ? current_temp : 0.0f;
   uint8_t last_rain = dbd_precipitation_to_percent(current_precip);
   uint16_t last_code =
@@ -905,8 +868,21 @@ static bool dbd_parse_optimaestro_weather_txt(const char *text,
   uint16_t last_solar = (uint16_t)(current_solar < 0.0f ? 0.0f : current_solar);
   float last_wind = current_wind;
 
-  for (int i = 0; i < DASHBOARD_WEATHER_HOURLY_POINTS; i++) {
-    time_t label_ts = hour_start + ((time_t)i * 3600);
+  snprintf(result->weather_time_24h[0], sizeof(result->weather_time_24h[0]),
+           "Now");
+  if (current_found) {
+    result->temp_c_24h[0] = current_temp;
+    result->rain_percent_24h[0] =
+        dbd_precipitation_to_percent(current_precip);
+    result->weather_code_24h[0] =
+        dbd_infer_weather_code(current_precip, current_wind, current_solar);
+    result->shortwave_wm2_24h[0] =
+        (uint16_t)(current_solar < 0.0f ? 0.0f : current_solar);
+    result->wind_kmh_24h[0] = current_wind;
+  }
+
+  for (int i = 1; i < DASHBOARD_WEATHER_HOURLY_POINTS; i++) {
+    time_t label_ts = future_hour_start + ((time_t)(i - 1) * 3600);
     dbd_format_weather_label(label_ts, result->weather_time_24h[i]);
 
     if (hourly[i].count > 0) {
@@ -924,6 +900,8 @@ static bool dbd_parse_optimaestro_weather_txt(const char *text,
           (uint16_t)(avg_solar < 0.0f ? 0.0f : avg_solar);
       result->wind_kmh_24h[i] = avg_wind;
 
+      if (first_valid_hour < 0)
+        first_valid_hour = i;
       last_temp = avg_temp;
       last_rain = rain_percent;
       last_code = weather_code;
@@ -939,36 +917,22 @@ static bool dbd_parse_optimaestro_weather_txt(const char *text,
     }
   }
 
-  for (int i = 0; i < DASHBOARD_WEATHER_DAILY_POINTS; i++) {
-    if (!daily_has_data[i] || daily[i].count == 0)
-      continue;
-
-    struct tm label_tm = day_tm;
-    label_tm.tm_mday += i;
-    time_t label_ts = mktime(&label_tm);
-
-    result->temp_c_daily[i] = daily_temp_max[i];
-    result->rain_percent_daily[i] =
-        dbd_precipitation_to_percent(daily[i].precip_sum);
-    result->weather_code_daily[i] =
-        dbd_infer_weather_code(daily[i].precip_sum, daily[i].wind_max,
-                               daily[i].solar_sum / (float)daily[i].count);
-    result->wind_kmh_daily[i] = daily[i].wind_max;
-
-    struct tm label_tm_local = {};
-    localtime_r(&label_ts, &label_tm_local);
-    strftime(result->weather_time_daily[i],
-             sizeof(result->weather_time_daily[i]), "%m-%d", &label_tm_local);
-
-    result->daily_count = (uint8_t)(i + 1);
-  }
-
-  if (!current_found && hourly_valid > 0) {
-    current_temp = result->temp_c_24h[0];
-    current_precip = hourly[0].precip_sum;
-    current_wind = result->wind_kmh_24h[0];
-    current_solar = result->shortwave_wm2_24h[0];
+  if (!current_found && first_valid_hour > 0) {
+    current_temp = result->temp_c_24h[first_valid_hour];
+    current_precip = hourly[first_valid_hour].precip_sum;
+    current_wind = result->wind_kmh_24h[first_valid_hour];
+    current_solar = result->shortwave_wm2_24h[first_valid_hour];
     current_found = true;
+    snprintf(result->weather_time_24h[0], sizeof(result->weather_time_24h[0]),
+             "Now");
+    result->temp_c_24h[0] = current_temp;
+    result->rain_percent_24h[0] =
+        dbd_precipitation_to_percent(current_precip);
+    result->weather_code_24h[0] =
+        dbd_infer_weather_code(current_precip, current_wind, current_solar);
+    result->shortwave_wm2_24h[0] =
+        (uint16_t)(current_solar < 0.0f ? 0.0f : current_solar);
+    result->wind_kmh_24h[0] = current_wind;
   }
 
   if (!current_found || hourly_valid == 0)
@@ -996,15 +960,19 @@ static bool dbd_fetch_optimaestro_weather(DbdFetchResult *result) {
   }
 
   time_t now = time(NULL);
+  if (!dbd_wall_clock_ready(now)) {
+    ESP_LOGW(TAG, "Weather fetch skipped: wall clock not synchronized");
+    dbd_copy_text(result->weather_error, sizeof(result->weather_error),
+                  "Waiting for clock sync");
+    return false;
+  }
+
   struct tm now_tm = {};
   localtime_r(&now, &now_tm);
   now_tm.tm_min = 0;
   now_tm.tm_sec = 0;
   time_t hour_start = mktime(&now_tm);
-  struct tm day_tm = now_tm;
-  day_tm.tm_hour = 0;
-  time_t day_start = mktime(&day_tm);
-  time_t end = day_start + ((time_t)DASHBOARD_WEATHER_DAILY_POINTS * 86400);
+  time_t end = hour_start + ((time_t)DASHBOARD_WEATHER_HOURLY_POINTS * 3600);
 
   char encoded_name[96];
   char encoded_lat[32];
@@ -1139,13 +1107,7 @@ void DashboardData::update_weather_forecast(
     const uint16_t weather_code_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
     const uint16_t shortwave_wm2_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
     const float wind_kmh_24h[DASHBOARD_WEATHER_HOURLY_POINTS],
-    const char time_24h[DASHBOARD_WEATHER_HOURLY_POINTS][6],
-    const float temp_c_daily[DASHBOARD_WEATHER_DAILY_POINTS],
-    const uint8_t rain_percent_daily[DASHBOARD_WEATHER_DAILY_POINTS],
-    const uint16_t weather_code_daily[DASHBOARD_WEATHER_DAILY_POINTS],
-    const float wind_kmh_daily[DASHBOARD_WEATHER_DAILY_POINTS],
-    const char time_daily[DASHBOARD_WEATHER_DAILY_POINTS][6],
-    uint8_t daily_count) {
+    const char time_24h[DASHBOARD_WEATHER_HOURLY_POINTS][6]) {
   update_weather(outdoor_c, weatherdata_.indoor_c, summary);
 
   memcpy(weatherdata_.temp_c_24h, temp_c_24h, sizeof(weatherdata_.temp_c_24h));
@@ -1158,16 +1120,6 @@ void DashboardData::update_weather_forecast(
   memcpy(weatherdata_.wind_kmh_24h, wind_kmh_24h,
          sizeof(weatherdata_.wind_kmh_24h));
   memcpy(weatherdata_.time_24h, time_24h, sizeof(weatherdata_.time_24h));
-  memcpy(weatherdata_.temp_c_daily, temp_c_daily,
-         sizeof(weatherdata_.temp_c_daily));
-  memcpy(weatherdata_.rain_percent_daily, rain_percent_daily,
-         sizeof(weatherdata_.rain_percent_daily));
-  memcpy(weatherdata_.weather_code_daily, weather_code_daily,
-         sizeof(weatherdata_.weather_code_daily));
-  memcpy(weatherdata_.wind_kmh_daily, wind_kmh_daily,
-         sizeof(weatherdata_.wind_kmh_daily));
-  memcpy(weatherdata_.time_daily, time_daily, sizeof(weatherdata_.time_daily));
-  weatherdata_.daily_count = daily_count;
 }
 
 void DashboardData::update_electricity(
@@ -1369,10 +1321,8 @@ static DashboardDataStatus dbd_wait_response(DashboardData *self,
     self->update_weather_forecast(
         result.outdoor_c, result.weather_summary, result.temp_c_24h,
         result.rain_percent_24h, result.weather_code_24h,
-        result.shortwave_wm2_24h, result.wind_kmh_24h, result.weather_time_24h,
-        result.temp_c_daily, result.rain_percent_daily,
-        result.weather_code_daily, result.wind_kmh_daily,
-        result.weather_time_daily, result.daily_count);
+        result.shortwave_wm2_24h, result.wind_kmh_24h,
+        result.weather_time_24h);
   } else if (result.weather_error[0] != '\0') {
     self->set_weather_error(result.weather_error);
   }
