@@ -17,7 +17,7 @@ A smart home dashboard for the **Waveshare ESP32-S3-Touch-LCD-7B** (1024×600, 7
 
 | Component | Description |
 |---|---|
-| [Waveshare ESP32-S3-Touch-LCD-7B](https://www.waveshare.com/esp32-s3-touch-lcd-7b.htm) | Main board with 7" 1024×600 touch display |
+| Waveshare ESP32-S3-Touch-LCD-7B | Main board with 7" 1024×600 touch display |
 | BME280 | Temperature, humidity and pressure sensor (connected via I2C) |
 
 ## Prerequisites
@@ -165,4 +165,4 @@ Open `html/index.html` in a browser to browse the API docs.
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+MIT
