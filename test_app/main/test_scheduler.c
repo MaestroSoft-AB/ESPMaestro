@@ -38,7 +38,7 @@ TEST_CASE("scheduler_create_task registers callback and work dispatches it",
 
   TEST_ASSERT_EQUAL_INT(1, s_callback_count);
   TEST_ASSERT_EQUAL_PTR(&context, s_last_context);
-  TEST_ASSERT_EQUAL_UINT64(98765, s_last_montime);
+  TEST_ASSERT_TRUE(98765 == s_last_montime);
 
   scheduler_dispose();
 }

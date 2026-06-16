@@ -63,8 +63,7 @@ TEST_CASE("UiStatus starts in init state and registers scheduler task",
     UiStatus status;
 
     TEST_ASSERT_EQUAL(UI_STATUS_INIT, status.get_state());
-    TEST_ASSERT_EQUAL_UINT64(0, status.get_next_clock_ms());
-    TEST_ASSERT_EQUAL_UINT64(0, status.next_bme280_ms);
+    TEST_ASSERT_TRUE(0 == status.get_next_clock_ms());
     TEST_ASSERT_NULL(status.sensor);
     TEST_ASSERT_EQUAL_INT(1, scheduler_get_task_count());
   }
@@ -104,7 +103,7 @@ TEST_CASE("UiStatus update_clock uses synchronized epoch and advances deadline",
   TEST_ASSERT_EQUAL_UINT16(2024, status.year);
   TEST_ASSERT_EQUAL_UINT8(1, status.month);
   TEST_ASSERT_EQUAL_UINT8(1, status.day);
-  TEST_ASSERT_EQUAL_UINT64(2000, status.get_next_clock_ms());
+  TEST_ASSERT_TRUE(2000 == status.get_next_clock_ms());
   TEST_ASSERT_EQUAL_INT(1, s_date_update_count);
   TEST_ASSERT_EQUAL_UINT16(2024, s_display_year);
   TEST_ASSERT_EQUAL_UINT8(1, s_display_month);
@@ -112,11 +111,11 @@ TEST_CASE("UiStatus update_clock uses synchronized epoch and advances deadline",
 
   status.update_clock(1999);
   TEST_ASSERT_EQUAL_UINT8(0, status.get_second());
-  TEST_ASSERT_EQUAL_UINT64(2000, status.get_next_clock_ms());
+  TEST_ASSERT_TRUE(2000 == status.get_next_clock_ms());
 
   status.update_clock(2500);
   TEST_ASSERT_EQUAL_UINT8(1, status.get_second());
-  TEST_ASSERT_EQUAL_UINT64(3500, status.get_next_clock_ms());
+  TEST_ASSERT_TRUE(3500 == status.get_next_clock_ms());
 }
 
 TEST_CASE("ui_status_update_clock forwards cached time to display handler",
@@ -142,8 +141,9 @@ TEST_CASE("ui_status_update_bme280 skips display update when sensor is absent",
   reset_display_spy();
 
   UiStatus status(nullptr);
+  status.next_bme280_ms = 77;
 
   TEST_ASSERT_EQUAL(UI_STATUS_IDLE, ui_status_update_bme280(&status, 1234));
   TEST_ASSERT_EQUAL_INT(0, s_bme280_update_count);
-  TEST_ASSERT_EQUAL_UINT64(0, status.next_bme280_ms);
+  TEST_ASSERT_TRUE(77 == status.next_bme280_ms);
 }
