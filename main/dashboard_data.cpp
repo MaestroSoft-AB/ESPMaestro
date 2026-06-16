@@ -195,19 +195,6 @@ static bool read_number_array_item(cJSON *array, int index, double *out) {
   return true;
 }
 
-static bool read_object_number_item(cJSON *object, const char *key,
-                                    double *out) {
-  if (object == NULL || key == NULL || out == NULL)
-    return false;
-
-  cJSON *item = cJSON_GetObjectItemCaseSensitive(object, key);
-  if (!cJSON_IsNumber(item))
-    return false;
-
-  *out = item->valuedouble;
-  return true;
-}
-
 static void dbd_format_energy_label(time_t stamp, uint16_t interval_minutes,
                                     char out[6]) {
   if (out == NULL)
@@ -848,7 +835,6 @@ static bool dbd_parse_optimaestro_weather_txt(const char *text,
           hourly[hour_index].count++;
         }
       }
-
     }
 
     line = strtok_r(NULL, "\n", &saveptr);
@@ -872,8 +858,7 @@ static bool dbd_parse_optimaestro_weather_txt(const char *text,
            "Now");
   if (current_found) {
     result->temp_c_24h[0] = current_temp;
-    result->rain_percent_24h[0] =
-        dbd_precipitation_to_percent(current_precip);
+    result->rain_percent_24h[0] = dbd_precipitation_to_percent(current_precip);
     result->weather_code_24h[0] =
         dbd_infer_weather_code(current_precip, current_wind, current_solar);
     result->shortwave_wm2_24h[0] =
@@ -926,8 +911,7 @@ static bool dbd_parse_optimaestro_weather_txt(const char *text,
     snprintf(result->weather_time_24h[0], sizeof(result->weather_time_24h[0]),
              "Now");
     result->temp_c_24h[0] = current_temp;
-    result->rain_percent_24h[0] =
-        dbd_precipitation_to_percent(current_precip);
+    result->rain_percent_24h[0] = dbd_precipitation_to_percent(current_precip);
     result->weather_code_24h[0] =
         dbd_infer_weather_code(current_precip, current_wind, current_solar);
     result->shortwave_wm2_24h[0] =
@@ -1321,8 +1305,7 @@ static DashboardDataStatus dbd_wait_response(DashboardData *self,
     self->update_weather_forecast(
         result.outdoor_c, result.weather_summary, result.temp_c_24h,
         result.rain_percent_24h, result.weather_code_24h,
-        result.shortwave_wm2_24h, result.wind_kmh_24h,
-        result.weather_time_24h);
+        result.shortwave_wm2_24h, result.wind_kmh_24h, result.weather_time_24h);
   } else if (result.weather_error[0] != '\0') {
     self->set_weather_error(result.weather_error);
   }

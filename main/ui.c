@@ -42,7 +42,6 @@ static void ui_build_screen_facility(UI *_UI);
 static void ui_build_screen_device_info(UI *_UI);
 static void ui_setup_finish_if_complete(UI *_UI);
 static void keyboard_event_cb(lv_event_t *e);
-static void ui_style_keyboard(lv_obj_t *keyboard);
 static void ui_hide_keyboard(UI *_UI);
 static void ui_show_keyboard(UI *_UI, lv_obj_t *ta);
 static lv_obj_t *ui_create_panel(lv_obj_t *_parent);
@@ -333,8 +332,8 @@ static void ui_forecast_time_axis_label(int tick, char *buf, uint32_t buf_size,
 
   int index = 0;
   if (UI_FORECAST_TIME_TICKS > 1) {
-    index = (tick * (UI_FORECAST_CHART_POINTS - 1)) /
-            (UI_FORECAST_TIME_TICKS - 1);
+    index =
+        (tick * (UI_FORECAST_CHART_POINTS - 1)) / (UI_FORECAST_TIME_TICKS - 1);
   }
 
   if (ui && index >= 0 && index < UI_FORECAST_CHART_POINTS &&
@@ -1637,31 +1636,6 @@ static void ui_show_keyboard(UI *_UI, lv_obj_t *ta) {
   lv_keyboard_set_textarea(_UI->keyboard, ta);
   lv_obj_clear_flag(_UI->keyboard, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(_UI->keyboard);
-}
-
-static void ui_style_keyboard(lv_obj_t *keyboard) {
-  lv_obj_set_style_bg_color(keyboard, lv_color_hex(C_BLACK), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(keyboard, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_width(keyboard, 0, LV_PART_MAIN);
-  lv_obj_set_style_radius(keyboard, 0, LV_PART_MAIN);
-  lv_obj_set_style_shadow_width(keyboard, 0, LV_PART_MAIN);
-  lv_obj_set_style_pad_all(keyboard, 4, LV_PART_MAIN);
-  lv_obj_set_style_pad_row(keyboard, 3, LV_PART_MAIN);
-  lv_obj_set_style_pad_column(keyboard, 3, LV_PART_MAIN);
-
-  lv_obj_set_style_bg_color(keyboard, lv_color_hex(C_CARD), LV_PART_ITEMS);
-  lv_obj_set_style_bg_opa(keyboard, LV_OPA_COVER, LV_PART_ITEMS);
-  lv_obj_set_style_border_width(keyboard, 0, LV_PART_ITEMS);
-  lv_obj_set_style_radius(keyboard, 2, LV_PART_ITEMS);
-  lv_obj_set_style_shadow_width(keyboard, 0, LV_PART_ITEMS);
-  lv_obj_set_style_outline_width(keyboard, 0, LV_PART_ITEMS);
-  lv_obj_set_style_text_color(keyboard, lv_color_white(), LV_PART_ITEMS);
-  lv_obj_set_style_text_font(keyboard, &notosans_14, LV_PART_ITEMS);
-
-  lv_obj_set_style_bg_color(keyboard, lv_color_hex(C_BLUE),
-                            LV_PART_ITEMS | LV_STATE_PRESSED);
-  lv_obj_set_style_bg_opa(keyboard, LV_OPA_COVER,
-                          LV_PART_ITEMS | LV_STATE_PRESSED);
 }
 
 static lv_obj_t *ui_create_textarea(UI *_UI, lv_obj_t *parent,

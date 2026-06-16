@@ -587,8 +587,6 @@ static void touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
     uint16_t touchpad_x = 0;
     uint16_t touchpad_y = 0;
     uint8_t touchpad_cnt = 0;
-    lv_indev_state_t previous_state = touch_last_state;
-    int64_t read_start_us = esp_timer_get_time();
 
     touch_irq_pending = false;
     touch_last_poll_us = now_us;
