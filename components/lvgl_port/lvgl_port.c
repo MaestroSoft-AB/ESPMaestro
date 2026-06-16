@@ -466,17 +466,8 @@ void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
                     lv_color_t *color_map) {
   esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
 
-  int64_t start_us = esp_timer_get_time();
-
   esp_lcd_panel_draw_bitmap(panel_handle, area->x1, area->y1, area->x2 + 1,
                             area->y2 + 1, color_map);
-
-  int64_t elapsed_us = esp_timer_get_time() - start_us;
-
-  if (elapsed_us > 10000) {
-    ESP_LOGW(TAG, "draw_bitmap %dx%d took %lld us", area->x2 - area->x1 + 1,
-             area->y2 - area->y1 + 1, elapsed_us);
-  }
 
   lv_disp_flush_ready(drv);
 }
