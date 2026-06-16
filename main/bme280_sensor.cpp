@@ -1,16 +1,76 @@
 #include "bme280_sensor.hpp"
+#include "display_handler.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "time.h"
 #include <string.h>
 
-#define BME280_RETRY_MS 1000
+#define BME280_RETRY_MS 3000
 #define BME280_TASK_STACK 4096
 #define BME280_TASK_PRIORITY 2
 
 static const char *TAG = "bme280";
+
+/*------------Cache helpers----------------*/
+static void bme_cache_save_float(const char *key, float value) {
+  nvs_handle_t h;
+  if (nvs_open("bme_cache", NVS_READWRITE, &h) != ESP_OK)
+    return;
+
+  int32_t scaled = (int32_t)(value * 100.0f);
+  nvs_set_i32(h, key, scaled);
+  nvs_commit(h);
+  nvs_close(h);
+}
+
+static bool bme_cache_load_float(const char *key, float *out) {
+  if (!out)
+    return false;
+
+  nvs_handle_t h;
+  if (nvs_open("bme_cache", NVS_READONLY, &h) != ESP_OK)
+    return false;
+
+  int32_t scaled = 0;
+  esp_err_t err = nvs_get_i32(h, key, &scaled);
+  nvs_close(h);
+
+  if (err != ESP_OK)
+    return false;
+
+  *out = ((float)scaled) / 100.0f;
+  return true;
+}
+
+static void bme_cache_save_u32(const char *key, uint32_t value) {
+  nvs_handle_t h;
+  if (nvs_open("bme_cache", NVS_READWRITE, &h) != ESP_OK)
+    return;
+
+  nvs_set_u32(h, key, value);
+  nvs_commit(h);
+  nvs_close(h);
+}
+
+static bool bme_cache_load_u32(const char *key, uint32_t *out) {
+  if (!out)
+    return false;
+
+  nvs_handle_t h;
+  if (nvs_open("bme_cache", NVS_READONLY, &h) != ESP_OK)
+    return false;
+
+  esp_err_t err = nvs_get_u32(h, key, out);
+  nvs_close(h);
+
+  return err == ESP_OK;
+}
+
+/*-------------------------------------------------------------------*/
 
 bool bme280::init(i2c_master_bus_handle_t bus) {
   if (initialized_)
@@ -26,7 +86,7 @@ bool bme280::init(i2c_master_bus_handle_t bus) {
     return true;
   }
 
-  ESP_LOGE(TAG, "bme280 not found");
+  ESP_LOGW(TAG, "bme280 not found");
   return false;
 }
 
@@ -55,11 +115,14 @@ bool bme280::init_at_address(i2c_master_bus_handle_t bus, uint8_t address) {
   dev_handle_ = temp_dev;
   address_ = address;
 
+  i2c_ctx_.dev = dev_handle_;
+  i2c_ctx_.mutex = i2c_mutex_;
+
   bosch_dev_.intf = BME280_I2C_INTF;
   bosch_dev_.read = bme280::i2c_read;
   bosch_dev_.write = bme280::i2c_write;
   bosch_dev_.delay_us = bme280::delay_us;
-  bosch_dev_.intf_ptr = &dev_handle_;
+  bosch_dev_.intf_ptr = &i2c_ctx_;
 
   int8_t res = bme280_init(&bosch_dev_);
 
@@ -67,6 +130,7 @@ bool bme280::init_at_address(i2c_master_bus_handle_t bus, uint8_t address) {
     ESP_LOGW(TAG, "Bosch bme280_init failed at 0x%02X: %d", address, res);
     i2c_master_bus_rm_device(temp_dev);
     dev_handle_ = nullptr;
+    i2c_ctx_.dev = nullptr;
     address_ = 0;
     return false;
   }
@@ -88,6 +152,7 @@ bool bme280::init_at_address(i2c_master_bus_handle_t bus, uint8_t address) {
     ESP_LOGE(TAG, "Failed to configure BME280: %d", res);
     i2c_master_bus_rm_device(temp_dev);
     dev_handle_ = nullptr;
+    i2c_ctx_.dev = nullptr;
     address_ = 0;
     return false;
   }
@@ -98,6 +163,7 @@ bool bme280::init_at_address(i2c_master_bus_handle_t bus, uint8_t address) {
     ESP_LOGE(TAG, "Failed to set BME280 normal mode: %d", res);
     i2c_master_bus_rm_device(temp_dev);
     dev_handle_ = nullptr;
+    i2c_ctx_.dev = nullptr;
     address_ = 0;
     return false;
   }
@@ -121,6 +187,14 @@ bool bme280::read() {
   }
   latest_ = make_reading(data, (uint32_t)time(nullptr));
 
+  display_handler_update_bme280(latest_.temperature_c, latest_.humidity_rh,
+                                latest_.pressure_hpa);
+
+  bme_cache_save_float("temp_c", latest_.temperature_c);
+  bme_cache_save_float("humidity", latest_.humidity_rh);
+  bme_cache_save_float("hpa", latest_.pressure_hpa);
+  bme_cache_save_u32("epoch", latest_.updated_epoch);
+
   return true;
 }
 
@@ -137,10 +211,18 @@ BME280_INTF_RET_TYPE bme280::i2c_read(uint8_t reg_addr, uint8_t *reg_data,
   if (intf_ptr == nullptr || reg_data == nullptr)
     return BME280_E_NULL_PTR;
 
-  auto dev = *static_cast<i2c_master_dev_handle_t *>(intf_ptr);
+  auto ctx = static_cast<bme280_i2c_context *>(intf_ptr);
 
-  esp_err_t err = i2c_master_transmit_receive(dev, &reg_addr, 1, reg_data, len,
-                                              pdMS_TO_TICKS(100));
+  if (ctx->dev == nullptr || ctx->mutex == nullptr)
+    return BME280_E_COMM_FAIL;
+
+  if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    return BME280_E_COMM_FAIL;
+
+  esp_err_t err = i2c_master_transmit_receive(ctx->dev, &reg_addr, 1, reg_data,
+                                              len, pdMS_TO_TICKS(100));
+
+  xSemaphoreGive(ctx->mutex);
 
   return err == ESP_OK ? BME280_INTF_RET_SUCCESS : BME280_E_COMM_FAIL;
 }
@@ -151,7 +233,10 @@ BME280_INTF_RET_TYPE bme280::i2c_write(uint8_t reg_addr,
   if (intf_ptr == nullptr || reg_data == nullptr)
     return BME280_E_NULL_PTR;
 
-  auto dev = *static_cast<i2c_master_dev_handle_t *>(intf_ptr);
+  auto ctx = static_cast<bme280_i2c_context *>(intf_ptr);
+
+  if (ctx->dev == nullptr || ctx->mutex == nullptr)
+    return BME280_E_COMM_FAIL;
 
   uint8_t buffer[32];
 
@@ -161,7 +246,13 @@ BME280_INTF_RET_TYPE bme280::i2c_write(uint8_t reg_addr,
   buffer[0] = reg_addr;
   memcpy(&buffer[1], reg_data, len);
 
-  esp_err_t err = i2c_master_transmit(dev, buffer, len + 1, pdMS_TO_TICKS(100));
+  if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    return BME280_E_COMM_FAIL;
+
+  esp_err_t err =
+      i2c_master_transmit(ctx->dev, buffer, len + 1, pdMS_TO_TICKS(100));
+
+  xSemaphoreGive(ctx->mutex);
 
   return err == ESP_OK ? BME280_INTF_RET_SUCCESS : BME280_E_COMM_FAIL;
 }
@@ -184,13 +275,40 @@ void bme280::delay_us(uint32_t period, void *intf_ptr) {
   esp_rom_delay_us(period);
 }
 
-bool bme280::start(i2c_master_bus_handle_t bus, uint32_t interval_ms) {
+bool bme280::start(i2c_master_bus_handle_t bus, SemaphoreHandle_t i2c_mutex,
+                   uint32_t interval_ms) {
   if (api_task_ != nullptr) {
     return true;
   }
 
   bus_ = bus;
+  i2c_mutex_ = i2c_mutex;
   api_interval_ms_ = interval_ms;
+
+  float temp = 0.0f;
+  float humidity = 0.0f;
+  float hpa = 0.0f;
+  uint32_t epoch = 0;
+
+  if (bme_cache_load_float("temp_c", &temp) &&
+      bme_cache_load_float("humidity", &humidity) &&
+      bme_cache_load_float("hpa", &hpa)) {
+    bme280_reading cached = {};
+    cached.valid = true;
+    cached.temperature_c = temp;
+    cached.humidity_rh = humidity;
+    cached.pressure_hpa = hpa;
+
+    if (bme_cache_load_u32("epoch", &epoch)) {
+      cached.updated_epoch = epoch;
+    } else {
+      cached.updated_epoch = 0;
+    }
+
+    latest_ = cached;
+    display_handler_update_bme280(latest_.temperature_c, latest_.humidity_rh,
+                                  latest_.pressure_hpa);
+  }
 
   return xTaskCreate(api_task_entry, "bme280", BME280_TASK_STACK, this,
                      BME280_TASK_PRIORITY, &api_task_) == pdPASS;
@@ -205,6 +323,8 @@ void bme280::stop() {
 
 void bme280::api_task_entry(void *arg) {
   bme280 *self = static_cast<bme280 *>(arg);
+
+  vTaskDelay(pdMS_TO_TICKS(5000));
 
   while (1) {
     if (!self->initialized_) {

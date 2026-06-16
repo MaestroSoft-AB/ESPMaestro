@@ -48,3 +48,17 @@ TEST_CASE("make_reading handles zero values", "[bme280]") {
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, reading.pressure_hpa);
   TEST_ASSERT_EQUAL_UINT32(0, reading.updated_epoch);
 }
+
+TEST_CASE("latest rejects null output", "[bme280]") {
+  bme280 sensor;
+
+  TEST_ASSERT_FALSE(sensor.latest(nullptr));
+}
+
+TEST_CASE("latest returns false before a valid reading exists", "[bme280]") {
+  bme280 sensor;
+  bme280_reading reading = {};
+
+  TEST_ASSERT_FALSE(sensor.latest(&reading));
+  TEST_ASSERT_FALSE(reading.valid);
+}

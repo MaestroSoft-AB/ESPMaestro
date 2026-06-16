@@ -132,9 +132,13 @@ uint16_t DEV_I2C_Read_Word(i2c_master_dev_handle_t dev_handle, uint8_t Cmd)
  * @param pdata Pointer to the data to send.
  * @param len The number of bytes to send.
  */
-void DEV_I2C_Write_Nbyte(i2c_master_dev_handle_t dev_handle, uint8_t *pdata, uint8_t len)
+esp_err_t DEV_I2C_Write_Nbyte(i2c_master_dev_handle_t dev_handle, uint8_t *pdata, uint8_t len)
 {
-    ESP_ERROR_CHECK(i2c_master_transmit(dev_handle, pdata, len, 100));  // Transmit the data block
+    esp_err_t err = i2c_master_transmit(dev_handle, pdata, len, 100);  // Transmit the data block
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "I2C write failed: %s", esp_err_to_name(err));
+    }
+    return err;
 }
 
 /**

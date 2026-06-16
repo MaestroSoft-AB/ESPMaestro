@@ -10,6 +10,20 @@
 static const char *TAG = "lv_port";          // Tag for logging
 static SemaphoreHandle_t lvgl_mux;           // LVGL mutex for synchronization
 static TaskHandle_t lvgl_task_handle = NULL; // Handle for the LVGL task
+static volatile bool touch_irq_pending = true;
+static int64_t touch_last_poll_us = 0;
+static lv_indev_state_t touch_last_state = LV_INDEV_STATE_RELEASED;
+static lv_point_t touch_last_point = {0, 0};
+
+#define LVGL_PORT_TOUCH_READ_PERIOD_MS (8)
+#define LVGL_PORT_REFR_PERIOD_MS (16)
+#define LVGL_PORT_TOUCH_ACTIVE_POLL_US (8000)
+#define LVGL_PORT_TOUCH_IDLE_POLL_US (50000)
+#define LVGL_PORT_LATENCY_TRACE (0)
+#define LVGL_PORT_FLUSH_WARN_US (20000)
+#define LVGL_PORT_TOUCH_READ_WARN_US (10000)
+#define LVGL_PORT_HANDLER_WARN_US (20000)
+#define LVGL_PORT_LOOP_GAP_WARN_US (100000)
 
 #if EXAMPLE_LVGL_PORT_ROTATION_DEGREE != 0
 // Function to get the next frame buffer for double buffering
@@ -205,6 +219,7 @@ static void flush_dirty_copy(void *dst, void *src,
 
 static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
                            lv_color_t *color_map) {
+  int64_t flush_start_us = esp_timer_get_time();
   esp_lcd_panel_handle_t panel_handle =
       (esp_lcd_panel_handle_t)
           drv->user_data;        // Get the panel handle from driver user data
@@ -289,30 +304,74 @@ static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
 }
 
 #else
+void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
+                    lv_color_t *color_map) {
+  esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
 
-static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
-                           lv_color_t *color_map) {
-  esp_lcd_panel_handle_t panel_handle =
-      (esp_lcd_panel_handle_t)
-          drv->user_data;        // Get the panel handle from driver user data
-  const int offsetx1 = area->x1; // Start X coordinate of the area to flush
-  const int offsetx2 = area->x2; // End X coordinate of the area to flush
-  const int offsety1 = area->y1; // Start Y coordinate of the area to flush
-  const int offsety2 = area->y2; // End Y coordinate of the area to flush
+  static void flush_callback(lv_disp_drv_t * drv, const lv_area_t *area,
+                             lv_color_t *color_map) {
+    int64_t flush_start_us = esp_timer_get_time();
+    esp_lcd_panel_handle_t panel_handle =
+        (esp_lcd_panel_handle_t)
+            drv->user_data;        // Get the panel handle from driver user data
+    const int offsetx1 = area->x1; // Start X coordinate of the area to flush
+    const int offsetx2 = area->x2; // End X coordinate of the area to flush
+    const int offsety1 = area->y1; // Start Y coordinate of the area to flush
+    const int offsety2 = area->y2; // End Y coordinate of the area to flush
 
-  /* Action after last area refresh */
-  if (lv_disp_flush_is_last(drv)) {
-    /* Switch the current RGB frame buffer to `color_map` */
-    esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1,
-                              offsety2 + 1, color_map);
+    /* Action after last area refresh */
+    if (lv_disp_flush_is_last(drv)) {
+      /* Switch the current RGB frame buffer to `color_map` */
+      esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1,
+                                offsety2 + 1, color_map);
 
-    /* Wait for the last frame buffer to complete transmission */
-    ulTaskNotifyValueClear(NULL, ULONG_MAX);
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+      /* Wait for the last frame buffer to complete transmission */
+      ulTaskNotifyValueClear(NULL, ULONG_MAX);
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    }
+
+#if LVGL_PORT_LATENCY_TRACE
+    int64_t flush_us = esp_timer_get_time() - flush_start_us;
+    if (flush_us >= LVGL_PORT_FLUSH_WARN_US) {
+      ESP_LOGW(TAG, "LVGL_TRACE flush slow: %lld us area=%dx%d last=%d",
+               (long long)flush_us, offsetx2 - offsetx1 + 1,
+               offsety2 - offsety1 + 1, lv_disp_flush_is_last(drv));
+    } else {
+      ESP_LOGD(TAG, "LVGL_TRACE flush: %lld us area=%dx%d last=%d",
+               (long long)flush_us, offsetx2 - offsetx1 + 1,
+               offsety2 - offsety1 + 1, lv_disp_flush_is_last(drv));
+    }
+#endif
+
+    lv_disp_flush_ready(drv); // Mark the display flush as complete
   }
 
-  lv_disp_flush_ready(drv); // Mark the display flush as complete
-}
+//
+// static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
+//                            lv_color_t *color_map) {
+//   esp_lcd_panel_handle_t panel_handle =
+//       (esp_lcd_panel_handle_t)
+//           drv->user_data;             // Get the panel handle from driver
+//           user
+//   data const int offsetx1 = area->x1; // Start X coordinate of the area to
+//   flush const int offsetx2 = area->x2;      // End X coordinate of the area
+//   to flush const int offsety1 = area->y1;      // Start Y coordinate of the
+//   area to flush const int offsety2 = area->y2;      // End Y coordinate of
+//   the area to flush
+//
+//   /* Action after last area refresh */
+//   if (lv_disp_flush_is_last(drv)) {
+//     /* Switch the current RGB frame buffer to `color_map` */
+//     esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1,
+//                               offsety2 + 1, color_map);
+//
+//     /* Wait for the last frame buffer to complete transmission */
+//     ulTaskNotifyValueClear(NULL, ULONG_MAX);
+//     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+//   }
+//
+//   lv_disp_flush_ready(drv); // Mark the display flush as complete
+// }
 #endif /* EXAMPLE_LVGL_PORT_ROTATION_DEGREE */
 
 #elif LVGL_PORT_FULL_REFRESH && LVGL_PORT_LCD_RGB_BUFFER_NUMS == 2
@@ -349,6 +408,7 @@ static void *lvgl_port_flush_next_buf =
 
 void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
                     lv_color_t *color_map) {
+  int64_t flush_start_us = esp_timer_get_time();
   esp_lcd_panel_handle_t panel_handle =
       (esp_lcd_panel_handle_t)
           drv->user_data;        // Get the panel handle from driver user data
@@ -384,28 +444,51 @@ void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
   lvgl_port_rgb_next_buf = color_map; // Update the next RGB buffer
 #endif
 
+#if LVGL_PORT_LATENCY_TRACE
+  int64_t flush_us = esp_timer_get_time() - flush_start_us;
+  if (flush_us >= LVGL_PORT_FLUSH_WARN_US) {
+    ESP_LOGW(TAG, "LVGL_TRACE flush slow: %lld us area=%dx%d last=%d",
+             (long long)flush_us, offsetx2 - offsetx1 + 1,
+             offsety2 - offsety1 + 1, lv_disp_flush_is_last(drv));
+  } else {
+    ESP_LOGD(TAG, "LVGL_TRACE flush: %lld us area=%dx%d last=%d",
+             (long long)flush_us, offsetx2 - offsetx1 + 1,
+             offsety2 - offsety1 + 1, lv_disp_flush_is_last(drv));
+  }
+#endif
+
   lv_disp_flush_ready(drv); // Mark the display flush as complete
 }
 #endif
 
 #else
-
 void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
                     lv_color_t *color_map) {
-  esp_lcd_panel_handle_t panel_handle =
-      (esp_lcd_panel_handle_t)
-          drv->user_data;        // Get the panel handle from driver user data
-  const int offsetx1 = area->x1; // Start X coordinate of the area to flush
-  const int offsetx2 = area->x2; // End X coordinate of the area to flush
-  const int offsety1 = area->y1; // Start Y coordinate of the area to flush
-  const int offsety2 = area->y2; // End Y coordinate of the area to flush
+  esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
 
-  /* Just copy data from the color map to the RGB frame buffer */
-  esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1,
-                            offsety2 + 1, color_map);
+  esp_lcd_panel_draw_bitmap(panel_handle, area->x1, area->y1, area->x2 + 1,
+                            area->y2 + 1, color_map);
 
-  lv_disp_flush_ready(drv); // Mark the display flush as complete
+  lv_disp_flush_ready(drv);
 }
+
+// void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area,
+//                     lv_color_t *color_map) {
+//   esp_lcd_panel_handle_t panel_handle =
+//       (esp_lcd_panel_handle_t)
+//           drv->user_data;        // Get the panel handle from driver user
+//           data
+//   const int offsetx1 = area->x1; // Start X coordinate of the area to flush
+//   const int offsetx2 = area->x2; // End X coordinate of the area to flush
+//   const int offsety1 = area->y1; // Start Y coordinate of the area to flush
+//   const int offsety2 = area->y2; // End Y coordinate of the area to flush
+//
+//   /* Just copy data from the color map to the RGB frame buffer */
+//   esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1,
+//                             offsety2 + 1, color_map);
+//
+//   lv_disp_flush_ready(drv); // Mark the display flush as complete
+// }
 
 #endif /* LVGL_PORT_AVOID_TEAR_ENABLE */
 
@@ -482,34 +565,109 @@ static lv_disp_t *display_init(esp_lcd_panel_handle_t panel_handle) {
   return lv_disp_drv_register(&disp_drv); // Register the display driver
 }
 
+static void IRAM_ATTR touch_interrupt_cb(esp_lcd_touch_handle_t tp) {
+  (void)tp;
+  touch_irq_pending = true;
+}
+
 static void touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
   esp_lcd_touch_handle_t tp =
       (esp_lcd_touch_handle_t)
           indev_drv->user_data; // Get touchpad handle from user data
   assert(tp);                   // Ensure touchpad handle is valid
 
-  uint16_t touchpad_x;      // Variable for X coordinate
-  uint16_t touchpad_y;      // Variable for Y coordinate
-  uint8_t touchpad_cnt = 0; // Variable for touch count
+  int64_t now_us = esp_timer_get_time();
+  int64_t poll_interval_us = (touch_last_state == LV_INDEV_STATE_PRESSED)
+                                 ? LVGL_PORT_TOUCH_ACTIVE_POLL_US
+                                 : LVGL_PORT_TOUCH_IDLE_POLL_US;
+  bool should_poll =
+      touch_irq_pending || (now_us - touch_last_poll_us) >= poll_interval_us;
 
-  /* Read data from touch controller into memory */
-  esp_lcd_touch_read_data(tp); // Read data from touch controller
+  if (should_poll) {
+    uint16_t touchpad_x = 0;
+    uint16_t touchpad_y = 0;
+    uint8_t touchpad_cnt = 0;
+    lv_indev_state_t previous_state = touch_last_state;
+    int64_t read_start_us = esp_timer_get_time();
 
-  /* Read data from touch controller */
-  bool touchpad_pressed =
-      esp_lcd_touch_get_coordinates(tp, &touchpad_x, &touchpad_y, NULL,
-                                    &touchpad_cnt, 1); // Get touch coordinates
-  if (touchpad_pressed && touchpad_cnt > 0) {
-    data->point.x = touchpad_x;           // Set the X coordinate
-    data->point.y = touchpad_y;           // Set the Y coordinate
-    data->state = LV_INDEV_STATE_PRESSED; // Set state to pressed
-    ESP_LOGD(TAG, "Touch position: %d,%d", touchpad_x, touchpad_y); // Log
-    // touch position
-  } else {
-    data->state = LV_INDEV_STATE_RELEASED; // Set state to released
+    touch_irq_pending = false;
+    touch_last_poll_us = now_us;
+
+    esp_lcd_touch_read_data(tp);
+
+    bool touchpad_pressed = esp_lcd_touch_get_coordinates(
+        tp, &touchpad_x, &touchpad_y, NULL, &touchpad_cnt, 1);
+    if (touchpad_pressed && touchpad_cnt > 0) {
+      touch_last_point.x = touchpad_x;
+      touch_last_point.y = touchpad_y;
+      touch_last_state = LV_INDEV_STATE_PRESSED;
+      ESP_LOGD(TAG, "Touch position: %d,%d", touchpad_x, touchpad_y);
+    } else {
+      touch_last_state = LV_INDEV_STATE_RELEASED;
+    }
+
+#if LVGL_PORT_LATENCY_TRACE
+    int64_t read_us = esp_timer_get_time() - read_start_us;
+    if (read_us >= LVGL_PORT_TOUCH_READ_WARN_US) {
+      ESP_LOGW(TAG, "LVGL_TRACE touch read slow: %lld us state=%s",
+               (long long)read_us,
+               touch_last_state == LV_INDEV_STATE_PRESSED ? "pressed"
+                                                          : "released");
+    }
+    if (previous_state != touch_last_state) {
+      ESP_LOGI(TAG, "LVGL_TRACE touch %s t=%lld x=%d y=%d read=%lld us",
+               touch_last_state == LV_INDEV_STATE_PRESSED ? "pressed"
+                                                          : "released",
+               (long long)esp_timer_get_time(), touch_last_point.x,
+               touch_last_point.y, (long long)read_us);
+    }
+#endif
   }
+
+  data->point = touch_last_point;
+  data->state = touch_last_state;
 }
 
+//
+// static void touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
+//   esp_lcd_touch_handle_t tp =
+//       (esp_lcd_touch_handle_t)
+//           indev_drv->user_data; // Get touchpad handle from user data
+//   assert(tp);                   // Ensure touchpad handle is valid
+//
+//   int64_t now_us = esp_timer_get_time();
+//   int64_t poll_interval_us = (touch_last_state == LV_INDEV_STATE_PRESSED)
+//                                  ? LVGL_PORT_TOUCH_ACTIVE_POLL_US
+//                                  : LVGL_PORT_TOUCH_IDLE_POLL_US;
+//   bool should_poll =
+//       touch_irq_pending || (now_us - touch_last_poll_us) >= poll_interval_us;
+//
+//   if (should_poll) {
+//     uint16_t touchpad_x = 0;
+//     uint16_t touchpad_y = 0;
+//     uint8_t touchpad_cnt = 0;
+//
+//     touch_irq_pending = false;
+//     touch_last_poll_us = now_us;
+//
+//     esp_lcd_touch_read_data(tp);
+//
+//     bool touchpad_pressed = esp_lcd_touch_get_coordinates(
+//         tp, &touchpad_x, &touchpad_y, NULL, &touchpad_cnt, 1);
+//     if (touchpad_pressed && touchpad_cnt > 0) {
+//       touch_last_point.x = touchpad_x;
+//       touch_last_point.y = touchpad_y;
+//       touch_last_state = LV_INDEV_STATE_PRESSED;
+//       ESP_LOGD(TAG, "Touch position: %d,%d", touchpad_x, touchpad_y);
+//     } else {
+//       touch_last_state = LV_INDEV_STATE_RELEASED;
+//     }
+//   }
+//
+//   data->point = touch_last_point;
+//   data->state = touch_last_state;
+// }
+//
 static lv_indev_t *indev_init(esp_lcd_touch_handle_t tp) {
   assert(tp); // Ensure the touch panel handle is valid
 
@@ -521,9 +679,13 @@ static lv_indev_t *indev_init(esp_lcd_touch_handle_t tp) {
       LV_INDEV_TYPE_POINTER; // Set the device type to pointer (touchpad)
   indev_drv_tp.read_cb = touchpad_read; // Set the read callback function
   indev_drv_tp.user_data = tp; // Set user data to the touch panel handle
+  lv_indev_t *indev = lv_indev_drv_register(&indev_drv_tp);
+  if (indev_drv_tp.read_timer) {
+    lv_timer_set_period(indev_drv_tp.read_timer,
+                        LVGL_PORT_TOUCH_READ_PERIOD_MS);
+  }
 
-  return lv_indev_drv_register(
-      &indev_drv_tp); // Register the input device driver
+  return indev; // Register the input device driver
 }
 
 static void tick_increment(void *arg) {
@@ -549,10 +711,32 @@ static void lvgl_port_task(void *arg) {
 
   uint32_t task_delay_ms =
       LVGL_PORT_TASK_MAX_DELAY_MS; // Set initial task delay
+#if LVGL_PORT_LATENCY_TRACE
+  int64_t last_loop_start_us = esp_timer_get_time();
+#endif
   while (1) {
-    if (lvgl_port_lock(-1)) {             // Try to lock the LVGL mutex
+#if LVGL_PORT_LATENCY_TRACE
+    int64_t loop_start_us = esp_timer_get_time();
+    int64_t loop_gap_us = loop_start_us - last_loop_start_us;
+    if (loop_gap_us >= LVGL_PORT_LOOP_GAP_WARN_US) {
+      ESP_LOGW(TAG, "LVGL_TRACE handler gap: %lld us previous_delay=%lu ms",
+               (long long)loop_gap_us, (unsigned long)task_delay_ms);
+    }
+    last_loop_start_us = loop_start_us;
+#endif
+    if (lvgl_port_lock(-1)) { // Try to lock the LVGL mutex
+#if LVGL_PORT_LATENCY_TRACE
+      int64_t handler_start_us = esp_timer_get_time();
+#endif
       task_delay_ms = lv_timer_handler(); // Handle LVGL timer events
-      lvgl_port_unlock();                 // Unlock the mutex
+#if LVGL_PORT_LATENCY_TRACE
+      int64_t handler_us = esp_timer_get_time() - handler_start_us;
+      if (handler_us >= LVGL_PORT_HANDLER_WARN_US) {
+        ESP_LOGW(TAG, "LVGL_TRACE handler slow: %lld us next_delay=%lu ms",
+                 (long long)handler_us, (unsigned long)task_delay_ms);
+      }
+#endif
+      lvgl_port_unlock(); // Unlock the mutex
     }
     // Ensure the delay time is within limits
     if (task_delay_ms > LVGL_PORT_TASK_MAX_DELAY_MS) {
@@ -561,7 +745,7 @@ static void lvgl_port_task(void *arg) {
       task_delay_ms = LVGL_PORT_TASK_MIN_DELAY_MS;
     }
     vTaskDelay(
-        pdMS_TO_TICKS(task_delay_ms)); // Delay the task for the calculated time
+        pdMS_TO_TICKS(task_delay_ms)); // Delay the task for the calculated
   }
 }
 
@@ -572,11 +756,17 @@ esp_err_t lvgl_port_init(esp_lcd_panel_handle_t lcd_handle,
 
   lv_disp_t *disp = display_init(lcd_handle); // Initialize the display
   assert(disp); // Ensure the display initialization was successful
+  if (disp->refr_timer) {
+    lv_timer_set_period(disp->refr_timer, LVGL_PORT_REFR_PERIOD_MS);
+  }
 
   if (tp_handle) {
     lv_indev_t *indev =
         indev_init(tp_handle); // Initialize the touchpad input device
     assert(indev); // Ensure the input device initialization was successful
+    touch_irq_pending = true;
+    (void)esp_lcd_touch_register_interrupt_callback_with_data(
+        tp_handle, touch_interrupt_cb, NULL);
 
     // Set touch panel orientation based on rotation
 #if EXAMPLE_LVGL_PORT_ROTATION_90
@@ -642,6 +832,9 @@ bool lvgl_port_notify_rgb_vsync(void) {
     lvgl_port_rgb_last_buf = lvgl_port_rgb_next_buf; // Update the last buffer
   }
 #elif LVGL_PORT_AVOID_TEAR_ENABLE
+  if (lvgl_task_handle == NULL) {
+    return false;
+  }
   // Notify that the current RGB frame buffer has been transmitted
   xTaskNotifyFromISR(lvgl_task_handle, ULONG_MAX, eNoAction,
                      &need_yield); // Notify the LVGL task

@@ -25,7 +25,7 @@
   (1) // The minimum delay of the LVGL timer task, in milliseconds
 #define LVGL_PORT_TASK_STACK_SIZE                                              \
   (6 * 1024) // The stack size of the LVGL timer task, in bytes
-#define LVGL_PORT_TASK_PRIORITY (4) // The priority of the LVGL timer task
+#define LVGL_PORT_TASK_PRIORITY (5) // The priority of the LVGL timer task
 #define LVGL_PORT_TASK_CORE (0)     // The core of the LVGL timer task,
 // `-1` means the don't specify the core
 /**
@@ -40,21 +40,21 @@
  *
  */
 
-#define CONFIG_EXAMPLE_LVGL_PORT_BUF_PSRAM 1
-#define CONFIG_EXAMPLE_LVGL_PORT_BUF_INTERNAL 0
+#define CONFIG_EXAMPLE_LVGL_PORT_BUF_PSRAM 0
+#define CONFIG_EXAMPLE_LVGL_PORT_BUF_INTERNAL 1
 
 #if CONFIG_EXAMPLE_LVGL_PORT_BUF_PSRAM
 #define LVGL_PORT_BUFFER_MALLOC_CAPS (MALLOC_CAP_SPIRAM)
 #elif CONFIG_EXAMPLE_LVGL_PORT_BUF_INTERNAL
 #define LVGL_PORT_BUFFER_MALLOC_CAPS (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
 #endif
-#define LVGL_PORT_BUFFER_HEIGHT (600)
+#define LVGL_PORT_BUFFER_HEIGHT (40)
 
 /**
  * Avoid tering related configurations, can be adjusted by users.
  *
  */
-#define LVGL_PORT_AVOID_TEAR_ENABLE (1) // Set to 1 to enable
+#define LVGL_PORT_AVOID_TEAR_ENABLE (0) // Set to 1 to enable
 #if LVGL_PORT_AVOID_TEAR_ENABLE
 /**
  * Set the avoid tearing mode:

@@ -68,9 +68,6 @@ typedef struct {
   lv_obj_t *forecast_table_prev_btn;
   lv_obj_t *forecast_table_next_btn;
   lv_obj_t *forecast_table_page_label;
-  lv_obj_t *forecast_range_24h_btn;
-  lv_obj_t *forecast_range_7d_btn;
-  lv_obj_t *forecast_range_30d_btn;
   lv_obj_t *forecast_x_axis_label;
   lv_obj_t *forecast_y_axis_label;
   lv_chart_series_t *forecast_temp_series;
@@ -82,7 +79,6 @@ typedef struct {
   lv_obj_t *forecast_detail_page_label;
   int forecast_detail_page;
   int forecast_table_page;
-  UI_Range forecast_range;
   UI_ViewMode forecast_view_mode;
 
   lv_obj_t *elpriser_chart;
@@ -119,16 +115,22 @@ typedef struct {
 
   lv_obj_t *nav_clock_label;
   lv_obj_t *nav_date_label;
+  lv_obj_t *home_outdoor_icon_label;
   lv_obj_t *home_outdoor_value_label;
   lv_obj_t *home_outdoor_sub_label;
+  lv_obj_t *home_price_icon_label;
   lv_obj_t *home_price_value_label;
   lv_obj_t *home_price_sub_label;
+  lv_obj_t *home_meter_icon_label;
   lv_obj_t *home_meter_value_label;
   lv_obj_t *home_meter_sub_label;
+  lv_obj_t *home_indoor_temp_icon_label;
   lv_obj_t *home_indoor_temp_value_label;
   lv_obj_t *home_indoor_temp_sub_label;
+  lv_obj_t *home_humidity_icon_label;
   lv_obj_t *home_humidity_value_label;
   lv_obj_t *home_humidity_sub_label;
+  lv_obj_t *home_pressure_icon_label;
   lv_obj_t *home_pressure_value_label;
   lv_obj_t *home_pressure_sub_label;
   uint16_t current_year;

@@ -124,24 +124,22 @@
   while (1)                                                                    \
     ;
 
-/*-------------
- * Others
- *-----------*/
+#define LV_USE_ANIMATION 0
 
 /* changed */
-#define LV_USE_PERF_MONITOR 1
+#define LV_USE_PERF_MONITOR 0
 
 #if LV_USE_PERF_MONITOR
 #define LV_USE_PERF_MONITOR_POS LV_ALIGN_BOTTOM_RIGHT
 #endif
 
-#define LV_USE_MEM_MONITOR 1
+#define LV_USE_MEM_MONITOR 0
 
 #if LV_USE_MEM_MONITOR
 #define LV_USE_MEM_MONITOR_POS LV_ALIGN_BOTTOM_LEFT
 #endif
 
-#define LV_USE_REFR_DEBUG 0
+#define LV_USE_REFR_DEBUG 1
 
 #define LV_SPRINTF_CUSTOM 0
 
@@ -213,7 +211,7 @@
 /* changed */
 #define LV_THEME_DEFAULT_GROW 0
 
-#define LV_THEME_DEFAULT_TRANSITION_TIME 80
+#define LV_THEME_DEFAULT_TRANSITION_TIME 0
 #endif
 
 /* changed */
